@@ -1,0 +1,103 @@
+{
+    "cases": {
+        "operation_broken_fang_case": {
+            "name": "Operation Broken Fang Case",
+            "image": "https://csgostash.com/img/containers/Operation+Broken+Fang+Case.png",
+            "items": [
+                {
+                    "name": "Glock-18 | Neo-Noir",
+                    "rarity": "Covert",
+                    "probability": 0.0025
+                },
+                {
+                    "name": "M4A1-S | Printstream",
+                    "rarity": "Covert",
+                    "probability": 0.0025
+                },
+                {
+                    "name": "USP-S | Monster Mashup",
+                    "rarity": "Classified",
+                    "probability": 0.0125
+                },
+                {
+                    "name": "AWP | Exoskeleton",
+                    "rarity": "Classified",
+                    "probability": 0.0125
+                },
+                {
+                    "name": "M4A4 | Cyber Security",
+                    "rarity": "Restricted",
+                    "probability": 0.03
+                }
+            ]
+        },
+        "prisma_case": {
+            "name": "Prisma Case",
+            "image": "https://csgostash.com/img/containers/Prisma+Case.png",
+            "items": [
+                {
+                    "name": "AK-47 | Asiimov",
+                    "rarity": "Covert",
+                    "probability": 0.0025
+                },
+                {
+                    "name": "Desert Eagle | Lightbringer",
+                    "rarity": "Covert",
+                    "probability": 0.0025
+                },
+                {
+                    "name": "AWP | Atheris",
+                    "rarity": "Classified",
+                    "probability": 0.0125
+                },
+                {
+                    "name": "UMP-45 | Momentum",
+                    "rarity": "Restricted",
+                    "probability": 0.03
+                }
+            ]
+        },
+        "clutch_case": {
+            "name": "Clutch Case",
+            "image": "https://csgostash.com/img/containers/Clutch+Case.png",
+            "items": [
+                {
+                    "name": "M4A4 | Neo-Noir",
+                    "rarity": "Covert",
+                    "probability": 0.0025
+                },
+                {
+                    "name": "MP5-SD | Phosphor",
+                    "rarity": "Classified",
+                    "probability": 0.0125
+                },
+                {
+                    "name": "AUG | Stymphalian",
+                    "rarity": "Restricted",
+                    "probability": 0.03
+                }
+            ]
+        },
+        "snakebite_case": {
+            "name": "Snakebite Case",
+            "image": "https://csgostash.com/img/containers/Snakebite+Case.png",
+            "items": [
+                {
+                    "name": "USP-S | The Traitor",
+                    "rarity": "Covert",
+                    "probability": 0.0025
+                },
+                {
+                    "name": "M4A4 | In Living Color",
+                    "rarity": "Classified",
+                    "probability": 0.0125
+                },
+                {
+                    "name": "XM1014 | XOXO",
+                    "rarity": "Restricted",
+                    "probability": 0.03
+                }
+            ]
+        }
+    }
+}
