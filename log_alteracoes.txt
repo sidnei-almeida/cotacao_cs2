@@ -1,0 +1,278 @@
+# LOG DE ALTERAÇÕES - PROJETO COTAÇÃO CS2
+
+## Data: [DATA ATUAL]
+## Versão: 0.5.0 (Storage Unit Access)
+
+### 1. ESTRUTURA ATUALIZADA DO PROJETO
+
+```
+cotacao_cs2/
+│
+├── main.py                  # Aplicação FastAPI com endpoints atualizados
+│
+├── requirements.txt         # Dependências atualizadas
+│
+├── data/                    # Dados estáticos
+│   └── cases.json           # Informações sobre caixas
+│
+├── services/                # Lógica de negócios
+│   ├── steam_inventory.py   # Processamento de inventários + acesso a unidades
+│   ├── steam_market.py      # Obtenção de preços via web scraping
+│   └── case_evaluator.py    # Avaliação simplificada de caixas
+│
+├── utils/                   # Utilitários
+│   ├── config.py            # Configurações da aplicação
+│   └── scraper.py           # Funções para web scraping
+│
+├── auth/                    # NOVO: Autenticação e autorização
+│   └── steam_auth.py        # NOVO: Funções para autenticação com Steam
+│
+└── log_alteracoes.txt       # Este arquivo de log
+```
+
+### 2. ALTERAÇÕES IMPLEMENTADAS
+
+#### 2.1. Simplificação do Avaliador de Caixas (case_evaluator.py)
+- Removida a análise detalhada do conteúdo interno das caixas
+- A função `get_case_details` agora retorna apenas preço de mercado e informações básicas
+- Adicionados atributos `source` e `item_type` para identificação clara dos itens
+
+#### 2.2. Aprimoramento do Processador de Inventário (steam_inventory.py)
+- Implementada distinção entre itens de Unidades de Armazenamento e itens de Mercado
+- Adicionado campo `source` aos itens para indicar a origem ("storage_unit" ou "market")
+- Criação de listas separadas para itens de cada origem nos resultados
+- Adicionada função auxiliar `get_item_image` para extrair URLs de imagens
+- NOVO: Adicionada função `get_storage_unit_contents` para acessar conteúdo das Unidades
+
+#### 2.3. Novos recursos de Autenticação (auth/steam_auth.py)
+- NOVO: Criado módulo de autenticação com a Steam usando OpenID
+- NOVO: Implementação de sistema de tokens JWT para manter sessões
+- NOVO: Funções para validação de login da Steam
+
+#### 2.4. Atualização dos Endpoints da API (main.py)
+- Endpoint `/inventory/{steamid}` modificado para fornecer estatísticas por origem
+- Endpoint `/case/{case_name}` simplificado para retornar apenas preço de mercado
+- Endpoint `/inventory/full/{steamid}` atualizado para categorizar itens por origem
+- NOVO: Endpoints de autenticação `/auth/steam` e `/auth/steam/callback`
+- NOVO: Endpoint `/inventory/complete/{steamid}` para análise incluindo conteúdo das Unidades
+- NOVO: Implementação de sistema de autenticação para acessar Unidades de Armazenamento
+
+#### 2.5. Atualização de Dependências (requirements.txt)
+- Adicionadas bibliotecas para autenticação: pyjwt, python-jose, python-openid
+
+### 3. NOVOS ENDPOINTS
+
+#### 3.1. Autenticação com a Steam
+- `GET /auth/steam`: Inicia o processo de autenticação, redirecionando para a página de login da Steam
+- `GET /auth/steam/callback`: Recebe o callback da Steam após o login bem-sucedido
+
+#### 3.2. Acesso ao Conteúdo das Unidades de Armazenamento
+- `GET /inventory/complete/{steamid}`: Retorna análise completa do inventário, incluindo o conteúdo das Unidades
+  - Requer autenticação via token JWT
+  - Requer parâmetros adicionais: session_id e steam_token
+  - Só permite acesso ao próprio inventário do usuário autenticado
+
+### 4. INSTRUÇÕES PARA O FRONTEND
+
+#### 4.1. Autenticação com a Steam
+1. Redirecionar o usuário para `/auth/steam`
+2. Após o login, ele será redirecionado para o frontend com token JWT e steamid como parâmetros
+3. Armazenar o token para uso nas requisições autenticadas
+
+#### 4.2. Obtendo Dados das Unidades de Armazenamento
+1. Enviar requisição para `/inventory/complete/{steamid}` com:
+   - Header Authorization: `Bearer {token}`
+   - Parâmetros: session_id (cookie da Steam), steam_token (cookie steamLoginSecure)
+2. Processar a resposta que conterá o inventário completo incluindo o conteúdo das Unidades
+
+#### 4.3. Formato da Resposta com Unidades de Armazenamento
+```json
+{
+  "steamid": "76561198123456789",
+  "total_items": 50,
+  "total_value": 1500.0,
+  "items": [...],  // Itens normais do inventário
+  "storage_units": [...],  // Unidades de Armazenamento
+  "market_items": [...],  // Itens do mercado
+  "storage_unit_contents": [  // NOVO: Conteúdo das Unidades
+    {
+      "unit_info": {...},  // Informações da Unidade
+      "contents": {
+        "storage_unit_id": "123456789",
+        "total_items": 10,
+        "items": [...],  // Itens dentro da Unidade
+        "total_value": 500.0
+      }
+    }
+  ],
+  "storage_units_content_value": 1200.0,  // Valor total dos itens nas Unidades
+  "grand_total_value": 2700.0,  // Valor total combinado
+  "all_items": [...]  // Lista plana com todos os itens (inventário + unidades)
+}
+```
+
+### 5. NOTAS IMPORTANTES
+
+1. **Segurança**: As credenciais da Steam são informações sensíveis. O frontend deve garantir que essas informações sejam transmitidas de forma segura (HTTPS obrigatório).
+
+2. **Termos de Serviço**: Verifique se esta implementação está em conformidade com os Termos de Serviço da Steam.
+
+3. **Cookies da Steam**: O acesso aos cookies da Steam pelo frontend pode ser limitado por políticas de segurança do navegador (CORS).
+
+4. **Limitações**: Nem todos os navegadores permitem acesso a cookies de terceiros, o que pode limitar a funcionalidade em alguns casos.
+
+5. **Versão da API**: A API foi atualizada para a versão 0.5.0 com foco no acesso às Unidades de Armazenamento.
+
+### 6. PRÓXIMOS PASSOS
+
+1. Refinar a experiência de autenticação para maior segurança
+2. Implementar cache para os dados das Unidades de Armazenamento
+3. Adicionar suporte para múltiplas Unidades de Armazenamento por usuário
+4. Melhorar a documentação da API (Swagger/OpenAPI)
+5. Implementar testes automatizados para os novos endpoints 
+
+# CS2 VALUATION API - DOCUMENTAÇÃO PARA DEPLOYMENT
+# Versão 0.5.0
+
+## VISÃO GERAL
+Esta API fornece cotação e avaliação de inventários de CS2 (Counter-Strike 2), com capacidade
+de obter preços do mercado Steam via web scraping, analisar inventários e acessar o conteúdo de
+Unidades de Armazenamento através de autenticação Steam.
+
+## ESTRUTURA DO PROJETO
+- main.py: Aplicação FastAPI com definição de endpoints
+- services/
+  - steam_inventory.py: Processamento de inventários, distinção entre itens e Unidades de Armazenamento
+  - steam_market.py: Web scraping para obtenção de preços de itens
+  - case_evaluator.py: Avaliação de caixas do CS2
+- auth/
+  - steam_auth.py: Autenticação via Steam OpenID
+- utils/
+  - config.py: Configurações e constantes
+- data/
+  - cases.json: Dados estáticos sobre caixas
+
+## DEPENDÊNCIAS
+Instalação: `pip install -r requirements.txt`
+
+Principais dependências:
+- fastapi>=0.100.0
+- uvicorn>=0.22.0
+- requests>=2.31.0
+- selectolax>=0.3.14 (para web scraping)
+- python-dotenv>=1.0.0
+- cachetools>=5.3.1
+- pydantic>=2.0.0
+- pyjwt>=2.8.0
+- python-multipart>=0.0.5
+
+## ENDPOINTS
+
+### Endpoints Públicos
+- `/inventory/{steamid}` - Inventário básico de terceiros
+- `/inventory/full/{steamid}` - Inventário categorizado de terceiros
+- `/price/{market_hash_name}` - Preço de um item específico
+- `/case/{case_name}` - Detalhes de uma caixa específica
+- `/cases` - Lista de caixas disponíveis
+- `/api/status` - Status do sistema
+
+### Endpoints Autenticados
+- `/my/inventory` - Inventário básico do usuário autenticado
+- `/my/inventory/full` - Inventário categorizado do usuário
+- `/my/inventory/complete` - Inventário completo com conteúdo das Unidades de Armazenamento
+
+### Autenticação
+- `/auth/steam` - Redireciona para login Steam 
+- `/auth/steam/callback` - Retorna token JWT após autenticação
+
+## CONFIGURAÇÃO PARA DEPLOYMENT
+
+### Variáveis de Ambiente (.env)
+```
+STEAM_API_KEY=sua_chave_api_steam (opcional)
+STEAM_MARKET_CURRENCY=7 (7=BRL, 1=USD)
+STEAM_APPID=730 (CS2)
+STEAM_REQUEST_DELAY=1.8 (segundos entre requisições)
+```
+
+### Configurações de Segurança
+- Modificar SECRET_KEY em auth/steam_auth.py para produção
+- Configurar CORS em main.py para permitir apenas domínios específicos
+
+### Recomendações para Produção
+1. Usar um proxy/cache para reduzir requisições ao Steam
+2. Implementar rate limiting para evitar abuso da API
+3. Configurar um frontend para integração com autenticação
+4. Usar HTTPS para proteger tokens e credenciais
+
+## FLUXO DE AUTENTICAÇÃO
+1. Frontend redireciona para `/auth/steam`
+2. Usuário faz login na Steam
+3. Steam redireciona para `/auth/steam/callback`
+4. API gera token JWT
+5. Frontend armazena token JWT
+6. Frontend adiciona token no header Authorization em requisições futuras
+
+## IMPLEMENTAÇÃO DE FRONTEND
+```javascript
+// Exemplo de código para frontend
+// Login
+async function login() {
+  window.location.href = '/auth/steam';
+}
+
+// Processar callback
+async function handleCallback() {
+  const tokenData = /* parse token from response */;
+  localStorage.setItem('authToken', tokenData.token);
+}
+
+// Obter inventário
+async function getInventory() {
+  const response = await fetch('/my/inventory', {
+    headers: {
+      'Authorization': `Bearer ${localStorage.getItem('authToken')}`
+    }
+  });
+  const data = await response.json();
+  // Renderizar dados
+}
+```
+
+## NOTAS ADICIONAIS
+- A API usa web scraping para obter preços, o que pode ser bloqueado pelo Steam com muitas requisições
+- Aumentamos os delays entre requisições para evitar bloqueios (erro 429)
+- O conteúdo das Unidades de Armazenamento só é acessível pelo proprietário autenticado
+- A avaliação de inventários vazios retorna uma resposta vazia válida, não mais dados mockados
+
+## MELHORIAS IMPLEMENTADAS
+1. Correção da indentação em get_real_inventory
+2. Adição de endpoints personalizados `/my/...` sem necessidade de SteamID
+3. Melhorias no sistema de autenticação com mensagens de erro detalhadas
+4. Remoção de endpoint redundante `/inventory/complete/{steamid}`
+5. Inventário vazio real em vez de dados mockados
+6. Documentação melhorada
+
+## DEPLOYMENT COM DOCKER (RECOMENDADO)
+```
+# Dockerfile
+FROM python:3.9-slim
+
+WORKDIR /app
+COPY . .
+RUN pip install --no-cache-dir -r requirements.txt
+
+EXPOSE 8000
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+```
+
+## DEPLOYMENT SEM DOCKER
+```
+# Instalar dependências
+pip install -r requirements.txt
+
+# Configurar variáveis de ambiente
+export STEAM_API_KEY=sua_chave_api_steam
+
+# Iniciar servidor
+uvicorn main:app --host 0.0.0.0 --port 8000 --workers 4 

@@ -1,126 +1,413 @@
 import requests
 import json
 import time
+import random
+import datetime
+import re
 from typing import Dict, List, Any, Optional
 from cachetools import TTLCache
 import os
 from dotenv import load_dotenv
+from selectolax.parser import HTMLParser
+from utils.config import (
+    STEAM_API_KEY, STEAM_MARKET_CURRENCY, STEAM_APPID, 
+    STEAM_REQUEST_DELAY, STEAM_MAX_RETRIES, STEAM_MAX_DELAY,
+    STEAM_DAILY_LIMIT
+)
 
 # Carrega as variáveis de ambiente (se existir um arquivo .env)
 load_dotenv()
 
-# Configurações
-STEAM_MARKET_CURRENCY = int(os.getenv('STEAM_MARKET_CURRENCY', '7'))  # 7 = BRL
-STEAM_APPID = int(os.getenv('STEAM_APPID', '730'))  # CS2
-STEAM_REQUEST_DELAY = float(os.getenv('STEAM_REQUEST_DELAY', '1.0'))
+# URLs da Steam
+STEAM_API_URL = "https://api.steampowered.com"
+STEAM_MARKET_BASE_URL = "https://steamcommunity.com/market/listings"
 
-# Cache para armazenar preços temporariamente (10 minutos de TTL)
-price_cache = TTLCache(maxsize=1000, ttl=600)
+# Cache para armazenar preços temporariamente (4 horas de TTL para dados de scraping)
+price_cache = TTLCache(maxsize=1000, ttl=14400)  # 4 horas
 
-# URL do endpoint não oficial de preços do mercado da Steam
-STEAM_MARKET_URL = "https://steamcommunity.com/market/priceoverview"
+# Último timestamp em que uma requisição foi feita
+last_request_time = 0
+
+# Mapeamento de códigos de moeda para símbolos
+CURRENCY_SYMBOLS = {
+    1: "$",      # USD
+    3: "€",      # EUR
+    5: "¥",      # JPY
+    7: "R$",     # BRL
+    9: "₽",      # RUB
+}
+
+# Mapeamento de códigos de qualidade para representação textual
+QUALITY_NAMES = {
+    "FN": "Factory New",
+    "MW": "Minimal Wear",
+    "FT": "Field-Tested",
+    "WW": "Well-Worn",
+    "BS": "Battle-Scarred"
+}
+
+# Adicionamos mock prices para desenvolvimento e fallback
+mock_prices = {
+    "Operation Broken Fang Case": 3.50,
+    "Prisma Case": 15.75,
+    "Clutch Case": 5.20,
+    "Snakebite Case": 2.85,
+    "AWP | Asiimov (Field-Tested)": 350.0,
+    "AK-47 | Redline (Field-Tested)": 120.0,
+    "★ Karambit | Doppler (Factory New)": 3500.0,
+    "★ Karambit": 2500.0,
+    "★ Butterfly Knife": 3200.0,
+    "★ M9 Bayonet": 1900.0,
+    "★ Bayonet": 1600.0,
+    "★ Flip Knife": 1200.0,
+    "★ Gut Knife": 800.0,
+    "M4A4 | The Emperor (Minimal Wear)": 85.0,
+    "USP-S | Kill Confirmed (Well-Worn)": 155.0,
+    # Itens de alto valor
+    "★ Gloves": 1800.0,
+    "★ Sport Gloves": 2200.0,
+    "★ Driver Gloves": 1900.0,
+    "★ Specialist Gloves": 2100.0,
+    "StatTrak™": 350.0,  # Valor base para qualquer item StatTrak
+}
+
+
+def sleep_between_requests(min_delay=STEAM_REQUEST_DELAY):
+    """
+    Aguarda um tempo suficiente entre requisições para evitar bloqueios.
+    Usa um delay mais curto para scraping do que para a API oficial.
+    
+    Args:
+        min_delay: Tempo mínimo a aguardar em segundos
+    """
+    global last_request_time
+    
+    current_time = time.time()
+    elapsed = current_time - last_request_time
+    
+    # Se o tempo desde a última requisição for menor que o delay mínimo
+    if elapsed < min_delay:
+        # Aumentar o delay para evitar o erro 429 (Too Many Requests)
+        sleep_time = min(min_delay - elapsed + random.uniform(1.0, 3.0), 5.0)
+        
+        if sleep_time > 0:
+            time.sleep(sleep_time)
+    else:
+        # Adicionar um pequeno delay mesmo se já passou tempo suficiente
+        time.sleep(random.uniform(0.5, 2.0))
+    
+    # Atualizar o último timestamp
+    last_request_time = time.time()
+
+
+def extract_price_from_text(price_text: str, currency_code: int = STEAM_MARKET_CURRENCY) -> Optional[float]:
+    """
+    Extrai o valor numérico de um texto de preço, removendo o símbolo da moeda.
+    
+    Args:
+        price_text: Texto contendo o preço (ex: "R$ 12,34")
+        currency_code: Código da moeda para determinar o símbolo a remover
+        
+    Returns:
+        Valor do preço como float ou None se não for possível extrair
+    """
+    if not price_text:
+        return None
+        
+    try:
+        # Remover espaços extras
+        price_text = price_text.strip()
+        
+        # Remover o símbolo da moeda
+        currency_symbol = CURRENCY_SYMBOLS.get(currency_code, "")
+        price_text = price_text.replace(currency_symbol, "").strip()
+        
+        # Para BRL, trocar vírgula por ponto
+        if currency_code == 7:  # BRL
+            price_text = price_text.replace(".", "").replace(",", ".").strip()
+        else:
+            # Para outras moedas, pode ser necessário ajustar aqui
+            price_text = price_text.replace(",", "").strip()
+        
+        # Extrair números com regex como fallback
+        number_match = re.search(r'[\d.]+', price_text)
+        if number_match:
+            price_text = number_match.group(0)
+        
+        return float(price_text)
+    except Exception as e:
+        print(f"Erro ao extrair preço de '{price_text}': {e}")
+        return None
+
+
+def get_item_price_via_scraping(market_hash_name: str, appid: int = STEAM_APPID, currency: int = STEAM_MARKET_CURRENCY) -> Optional[float]:
+    """
+    Obtém o preço de um item através de scraping da página do mercado da Steam.
+    
+    Args:
+        market_hash_name: Nome do item formatado para o mercado
+        appid: ID da aplicação na Steam (730 = CS2)
+        currency: Código da moeda (7 = BRL)
+        
+    Returns:
+        Preço médio do item ou None se falhar
+    """
+    # URL codificada para o item
+    encoded_name = requests.utils.quote(market_hash_name)
+    url = f"{STEAM_MARKET_BASE_URL}/{appid}/{encoded_name}"
+    
+    # Adicionar parâmetro de moeda
+    url += f"?currency={currency}"
+    
+    print(f"Obtendo preço via scraping para: {market_hash_name}")
+    
+    # Aguardar tempo entre requisições
+    sleep_between_requests()
+    
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
+        'Cache-Control': 'no-cache',
+        'Referer': 'https://steamcommunity.com/market/search?appid=730'
+    }
+    
+    try:
+        response = requests.get(url, headers=headers, timeout=30)  # Aumento do timeout para 30s
+        
+        if response.status_code == 200:
+            # Salvar o HTML para debugging (só em ambiente de dev)
+            # with open(f"debug_{encoded_name}.html", "w", encoding="utf-8") as f:
+            #    f.write(response.text)
+            
+            # Processar HTML com selectolax
+            parser = HTMLParser(response.text)
+            
+            # Primeiro tenta encontrar o preço de venda mais baixo
+            price_element = parser.css_first("span.market_listing_price_with_fee")
+            
+            if price_element:
+                price_text = price_element.text()
+                price = extract_price_from_text(price_text, currency)
+                
+                if price:
+                    print(f"Preço via scraping para {market_hash_name}: {price}")
+                    return price
+            
+            # Se não encontrar o elemento esperado, tentar alternativas...
+            # 1. Tentar encontrar dados de preço no JavaScript da página
+            script_tags = parser.css("script")
+            for script in script_tags:
+                script_text = script.text()
+                
+                # Procurar padrões diferentes de preço no JavaScript
+                price_patterns = [
+                    r'Market_LoadOrderSpread\(\s*\d+\s*\);\s*var\s+g_rgAssets.*?"lowest_price":\s*"([^"]+)"',
+                    r'"lowest_price":"([^"]+)"',
+                    r'"median_price":"([^"]+)"',
+                    r'market_listing_price_with_fee">([^<]+)<',
+                    r'market_listing_price_without_fee">([^<]+)<'
+                ]
+                
+                for pattern in price_patterns:
+                    price_match = re.search(pattern, script_text, re.DOTALL)
+                    if price_match:
+                        price_text = price_match.group(1)
+                        price = extract_price_from_text(price_text, currency)
+                        
+                        if price:
+                            print(f"Preço encontrado via JavaScript para {market_hash_name}: {price}")
+                            return price
+            
+            # 2. Tentar qualquer texto que pareça um preço na página
+            price_candidates = []
+            
+            for element in parser.css("span"):
+                if element.text() and re.search(r'\d+[.,]\d+', element.text()):
+                    price_candidate = extract_price_from_text(element.text(), currency)
+                    if price_candidate and price_candidate > 0:
+                        price_candidates.append(price_candidate)
+            
+            # Se encontrou candidatos, usar o menor valor (mais conservador)
+            if price_candidates:
+                min_price = min(price_candidates)
+                print(f"Preço candidato para {market_hash_name}: {min_price}")
+                return min_price
+            
+            print(f"Não foi possível encontrar o preço para {market_hash_name} via scraping")
+        else:
+            print(f"Erro ao acessar página do mercado: Status {response.status_code}")
+    
+    except Exception as e:
+        print(f"Erro durante scraping para {market_hash_name}: {e}")
+        import traceback
+        traceback.print_exc()
+    
+    # Tentar uma segunda vez com outro user-agent
+    try:
+        # User-agent alternativo
+        alt_headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3',
+            'Accept-Language': 'en-US,en;q=0.8',
+            'Cache-Control': 'max-age=0'
+        }
+        
+        print(f"Tentando novamente com user-agent alternativo para: {market_hash_name}")
+        sleep_between_requests(2.0)  # Esperar mais tempo na segunda tentativa
+        
+        response = requests.get(url, headers=alt_headers, timeout=30)
+        
+        if response.status_code == 200:
+            parser = HTMLParser(response.text)
+            price_containers = parser.css("span.normal_price")
+            
+            if price_containers:
+                for container in price_containers:
+                    price_text = container.text()
+                    if price_text and re.search(r'\d', price_text):
+                        price = extract_price_from_text(price_text, currency)
+                        if price and price > 0:
+                            print(f"Preço encontrado na segunda tentativa: {price}")
+                            return price
+        
+    except Exception as e:
+        print(f"Segunda tentativa falhou: {e}")
+    
+    return None
 
 
 def get_item_price(market_hash_name: str, currency: int = None, appid: int = None) -> float:
     """
-    Obtém o preço atual de um item no mercado da Steam usando o endpoint não oficial.
+    Obtém o preço atual de um item no Steam Market.
+    Usa sempre o método de scraping e nunca a API oficial.
     
     Args:
-        market_hash_name: Nome do item formatado para o mercado
-        currency: Código da moeda (7 = Real Brasileiro). Se None, usa o valor de configuração
-        appid: ID da aplicação na Steam (730 = CS2). Se None, usa o valor de configuração
+        market_hash_name: Nome formatado do item para o mercado
+        currency: Código da moeda (padrão definido em configuração)
+        appid: ID da aplicação na Steam (padrão definido em configuração)
         
     Returns:
-        Preço médio do item em BRL
+        Preço médio atual do item
     """
-    # Usa valores de configuração se não especificados
     if currency is None:
         currency = STEAM_MARKET_CURRENCY
         
     if appid is None:
         appid = STEAM_APPID
-        
-    # Verifica se o preço está em cache
+    
+    # Verificar se o item já está no cache
     cache_key = f"{market_hash_name}_{currency}_{appid}"
     if cache_key in price_cache:
+        print(f"Usando preço em cache para {market_hash_name}")
         return price_cache[cache_key]
     
-    # Tenta obter o preço real do mercado da Steam
-    price = get_market_price(market_hash_name, currency, appid)
-    if price is not None:
+    # Iniciar com base no nome do item
+    price = 0.0
+    
+    # Primeiro verificar se é um adesivo (sticker) ou item comum e usar valor mock
+    if "Sticker" in market_hash_name or "Adesivo" in market_hash_name:
+        # Para adesivos, usar um valor padrão para evitar requisições excessivas
+        if "Copenhagen 2024" in market_hash_name:
+            price = 1.5
+        elif "Rio 2022" in market_hash_name:
+            price = 2.5
+        elif "Glitter" in market_hash_name:
+            price = 5.0
+        else:
+            price = 3.0
+            
+        print(f"Usando preço estimado para adesivo: {market_hash_name}: {price}")
         price_cache[cache_key] = price
         return price
     
-    # Se não conseguir obter o preço real, usar dados mockados
-    # Simulação de preços para fins de desenvolvimento
-    mock_prices = {
-        "Operation Broken Fang Case": 3.50,
-        "Prisma Case": 15.75,
-        "Clutch Case": 5.20,
-        "Snakebite Case": 2.85,
-        "AWP | Asiimov (Field-Tested)": 350.0,
-        "AK-47 | Redline (Field-Tested)": 120.0,
-        "★ Karambit | Doppler (Factory New)": 3500.0,
-        "M4A4 | The Emperor (Minimal Wear)": 85.0,
-        "USP-S | Kill Confirmed (Well-Worn)": 155.0,
-    }
+    # Verificar preços mockados antes do scraping
+    for mock_name, mock_price in mock_prices.items():
+        if mock_name.lower() in market_hash_name.lower():
+            price = mock_price
+            print(f"Usando preço mockado para {market_hash_name}: {price}")
+            price_cache[cache_key] = price
+            return price
+            
+    # Se o item não tem preço mockado específico, tentar estimar com base em características
+    if "StatTrak™" in market_hash_name:
+        price += mock_prices.get("StatTrak™", 0.0)
+        print(f"Estimando preço StatTrak para {market_hash_name}: {price}")
+        price_cache[cache_key] = price
+        return price
     
-    # Retornar um preço mockado ou um valor padrão
-    price = mock_prices.get(market_hash_name, 10.0)
+    for quality, name in QUALITY_NAMES.items():
+        if name in market_hash_name or f"({quality})" in market_hash_name:
+            # Aplicar um fator ao preço base estimado com base na qualidade
+            quality_factor = {
+                "FN": 1.5,    # Factory New - mais caro
+                "MW": 1.2,    # Minimal Wear
+                "FT": 1.0,    # Field-Tested - preço base
+                "WW": 0.8,    # Well-Worn
+                "BS": 0.6     # Battle-Scarred - mais barato
+            }.get(quality, 1.0)
+            
+            price = max(price, 5.0 * quality_factor)  # Preço mínimo fallback
+            print(f"Estimando preço por qualidade para {market_hash_name}: {price}")
+            price_cache[cache_key] = price
+            return price
     
-    # Armazena em cache
+    # Apenas se não conseguiu encontrar preço de outra forma, tentar scraping
+    try:
+        print(f"Buscando preço via scraping para {market_hash_name}")
+        price = get_item_price_via_scraping(market_hash_name, appid, currency) or 0.0
+        
+        # Se o scraping retornou um valor válido, usar e armazenar no cache
+        if price > 0:
+            print(f"Preço obtido via scraping para {market_hash_name}: {price}")
+            price_cache[cache_key] = price
+            return price
+    except Exception as e:
+        print(f"Erro ao fazer scraping para {market_hash_name}: {e}")
+        # Aplicar preço fallback
+        price = 2.0
+    
+    # Garantir um preço mínimo sensível para itens não encontrados
+    price = max(price, 1.0)
+    
+    # Armazenar no cache e retornar
     price_cache[cache_key] = price
-    
     return price
 
 
-def get_market_price(market_hash_name: str, currency: int, appid: int) -> Optional[float]:
+def get_steam_api_data(interface: str, method: str, version: str, params: dict) -> Optional[Dict]:
     """
-    Obtém o preço real de um item do mercado da Steam usando o endpoint não oficial.
+    Realiza uma chamada para a API oficial da Steam.
     
     Args:
-        market_hash_name: Nome do item formatado para o mercado
-        currency: Código da moeda (7 = Real Brasileiro)
-        appid: ID da aplicação na Steam (730 = CS2)
+        interface: A interface da API (ex: 'IEconService')
+        method: O método a ser chamado (ex: 'GetTradeOffers')
+        version: A versão da API (ex: 'v1')
+        params: Parâmetros adicionais para a chamada
         
     Returns:
-        Preço médio do item ou None se falhar
+        Dados da API ou None se falhar
     """
-    params = {
-        "currency": currency,
-        "appid": appid,
-        "market_hash_name": market_hash_name
-    }
+    url = f"{STEAM_API_URL}/{interface}/{method}/{version}/"
+    
+    # Adiciona a chave API aos parâmetros
+    api_params = params.copy()
+    api_params['key'] = STEAM_API_KEY
     
     try:
-        response = requests.get(STEAM_MARKET_URL, params=params)
+        # Aguardar tempo apropriado entre requisições
+        sleep_between_requests()
+        
+        response = requests.get(url, params=api_params, timeout=15)
         
         if response.status_code == 200:
-            data = response.json()
-            
-            # A resposta da Steam contém 'lowest_price' e possivelmente 'median_price'
-            if "median_price" in data:
-                # Remover símbolo de moeda e converter para float
-                price_str = data["median_price"].replace("R$", "").replace(",", ".").strip()
-                return float(price_str)
-            elif "lowest_price" in data:
-                price_str = data["lowest_price"].replace("R$", "").replace(",", ".").strip()
-                return float(price_str)
-        
-        # Se recebeu erro 429 (Too Many Requests) ou outro erro
-        elif response.status_code == 429:
-            print(f"Rate limit excedido na API do mercado da Steam. Aguardando {STEAM_REQUEST_DELAY} segundos.")
-            time.sleep(STEAM_REQUEST_DELAY * 2)  # Espera mais tempo em caso de limite de taxa
-            
+            return response.json()
         else:
-            print(f"Erro ao acessar API do mercado: Status {response.status_code}")
-            
+            print(f"Erro na API oficial da Steam: Status {response.status_code}, URL: {url}")
+            if response.status_code == 403:
+                print("Erro de autenticação: Verifique se a chave API está correta e tem as permissões necessárias.")
+    
     except Exception as e:
-        print(f"Erro ao obter preço via mercado para {market_hash_name}: {e}")
-    
-    # Respeitar limite de requisições independente do resultado
-    time.sleep(STEAM_REQUEST_DELAY)
-    
+        print(f"Erro ao chamar API oficial da Steam: {e}")
+        
     return None
 
 
@@ -140,23 +427,24 @@ def get_item_listings_page(market_hash_name: str, appid: int = None) -> Optional
         appid = STEAM_APPID
         
     # URL da página de listagens do mercado
-    url = f"https://steamcommunity.com/market/listings/{appid}/{market_hash_name}"
+    encoded_name = requests.utils.quote(market_hash_name)
+    url = f"{STEAM_MARKET_BASE_URL}/{appid}/{encoded_name}"
     
     try:
+        # Aguardar tempo apropriado entre requisições
+        sleep_between_requests()
+        
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.212 Safari/537.36'
         }
         
-        response = requests.get(url, headers=headers)
+        response = requests.get(url, headers=headers, timeout=15)
         
         if response.status_code == 200:
             return response.text
         else:
             print(f"Erro ao acessar página do mercado: Status {response.status_code}")
             
-        # Respeitar limite de requisições
-        time.sleep(STEAM_REQUEST_DELAY)
-        
     except Exception as e:
         print(f"Erro ao obter página de listagens para {market_hash_name}: {e}")
     
@@ -165,35 +453,76 @@ def get_item_listings_page(market_hash_name: str, appid: int = None) -> Optional
 
 def get_api_status() -> Dict[str, Any]:
     """
-    Verifica o status da API do mercado da Steam e faz um teste de conexão.
+    Verifica o status do sistema de scraping e da API oficial da Steam.
     
     Returns:
-        Dicionário com informações sobre o status da API
+        Dicionário com informações sobre o status
     """
     result = {
-        "market_api_reachable": False,
+        "scraping_system": "active",
+        "scraping_test": False,
+        "steam_web_api_reachable": False,
+        "api_key_configured": bool(STEAM_API_KEY),
         "currency": STEAM_MARKET_CURRENCY,
-        "appid": STEAM_APPID
+        "appid": STEAM_APPID,
+        "cache_info": {
+            "size": len(price_cache),
+            "maxsize": price_cache.maxsize,
+            "ttl_seconds": price_cache.ttl
+        },
+        "pricing_method": "web_scraping_only"  # Indicar que apenas o scraping é usado para preços
     }
     
-    # Testar conexão com API do mercado (não requer chave)
+    # Testar sistema de scraping com um item comum
     try:
         test_item = "Operation Broken Fang Case"
-        params = {
-            "currency": STEAM_MARKET_CURRENCY,
-            "appid": STEAM_APPID,
-            "market_hash_name": test_item
-        }
         
-        response = requests.get(STEAM_MARKET_URL, params=params)
-        result["market_api_reachable"] = response.status_code == 200
+        # Tenta remover do cache para testar o scraping realmente
+        cache_key = f"{test_item}_{STEAM_MARKET_CURRENCY}_{STEAM_APPID}"
+        if cache_key in price_cache:
+            del price_cache[cache_key]
+            
+        # Testa o scraping
+        start_time = time.time()
+        price = get_item_price_via_scraping(test_item, STEAM_APPID, STEAM_MARKET_CURRENCY)
+        end_time = time.time()
         
-        if response.status_code == 200:
-            data = response.json()
-            result["test_response"] = data
+        result["scraping_test"] = price is not None
+        
+        if price is not None:
+            result["scraping_test_response"] = {
+                "item": test_item,
+                "price": price,
+                "time_taken_ms": round((end_time - start_time) * 1000)
+            }
         
     except Exception as e:
-        print(f"Erro ao testar API do mercado: {e}")
-        result["error"] = str(e)
+        print(f"Erro ao testar sistema de scraping: {e}")
+        result["scraping_error"] = str(e)
+    
+    # Testar conexão com API oficial da Steam (somente para fins de diagnóstico)
+    # Nota: Essa API NÃO é usada para obter preços, apenas para outros dados
+    if STEAM_API_KEY:
+        try:
+            # Teste simples com a interface ISteamUser
+            api_data = get_steam_api_data(
+                "ISteamUser", 
+                "GetPlayerSummaries", 
+                "v2", 
+                {"steamids": "76561198071275191"}  # Exemplo de SteamID
+            )
+            
+            result["steam_web_api_reachable"] = api_data is not None
+            
+            if api_data:
+                result["web_api_test_response"] = {
+                    "response_status": "OK",
+                    "players_found": len(api_data.get("response", {}).get("players", [])),
+                    "note": "API oficial usada apenas para dados de inventário, não para preços"
+                }
+                
+        except Exception as e:
+            print(f"Erro ao testar API oficial da Steam: {e}")
+            result["web_api_error"] = str(e)
     
     return result

@@ -1,0 +1,100 @@
+# MELHORIAS NECESSÁRIAS NO BACKEND - SISTEMA DE AUTENTICAÇÃO STEAM
+
+## PROBLEMA IDENTIFICADO
+Atualmente, o endpoint `/auth/steam/callback` retorna uma resposta JSON com o token JWT e o steamID, 
+exigindo que o usuário copie manualmente o token ou implementando uma solução complexa no frontend.
+Isso cria uma experiência de usuário ruim e interrompe o fluxo de autenticação.
+
+## SOLUÇÃO PROPOSTA
+Modificar o endpoint de callback para realizar um redirecionamento HTTP para o frontend, 
+passando o token JWT como parâmetro na URL.
+
+## ALTERAÇÕES NECESSÁRIAS
+
+### 1. Backend (main.py ou auth/steam_auth.py)
+Encontrar a função que trata o callback da autenticação Steam e modificá-la:
+
+```python
+# Código atual aproximado
+@app.get("/auth/steam/callback")
+async def steam_callback(params: dict = Depends(openid.verify_steam_login)):
+    # Gera o token JWT
+    token = create_jwt_token(params["steamid"])
+    
+    # Retorno atual (problema)
+    return {
+        "success": True,
+        "message": "Autenticação com a Steam concluída com sucesso",
+        "steam_id": params["steamid"],
+        "token": token,
+        "instrucoes": "Use este token para acessar endpoints protegidos como /inventory/complete/{steamid}"
+    }
+```
+
+### 2. Modificação necessária
+```python
+from fastapi.responses import RedirectResponse
+
+@app.get("/auth/steam/callback")
+async def steam_callback(params: dict = Depends(openid.verify_steam_login)):
+    # Gera o token JWT
+    token = create_jwt_token(params["steamid"])
+    
+    # URL do frontend (atualizar para o domínio correto em produção)
+    # Para desenvolvimento local:
+    frontend_url = "http://localhost:5500/api.html"
+    # Para produção:
+    # frontend_url = "https://elite-skins-2025.github.io/api.html"
+    
+    # Redirecionar para o frontend com o token como parâmetro
+    redirect_url = f"{frontend_url}?token={token}"
+    
+    # Retornar um redirecionamento HTTP 302
+    return RedirectResponse(url=redirect_url)
+```
+
+### 3. Frontend (api.html)
+Adicionar código JavaScript para capturar o token da URL:
+
+```javascript
+// Adicionar no início da função que é executada no DOMContentLoaded
+document.addEventListener('DOMContentLoaded', function() {
+    // Função para obter parâmetros da URL
+    function getUrlParam(name) {
+        const urlParams = new URLSearchParams(window.location.search);
+        return urlParams.get(name);
+    }
+    
+    // Verificar se há um token na URL
+    const token = getUrlParam('token');
+    if (token) {
+        // Salvar o token no localStorage
+        localStorage.setItem('steamAuthToken', token);
+        authToken = token;
+        
+        // Limpar a URL para segurança (remove o token visível)
+        window.history.replaceState({}, document.title, window.location.pathname);
+        
+        // Atualizar a interface para mostrar que o usuário está logado
+        checkAuthStatus();
+    }
+});
+```
+
+## BENEFÍCIOS DA ALTERAÇÃO
+1. Experiência de usuário contínua sem interrupções no fluxo de autenticação
+2. Maior segurança por remover a necessidade de copiar/colar tokens manualmente
+3. Compatibilidade com o código frontend existente (usa a mesma função checkAuthStatus)
+4. Implementação simples que segue padrões web modernos
+
+## CONSIDERAÇÕES DE SEGURANÇA
+1. Garantir que a comunicação seja feita via HTTPS em produção
+2. Remover o token da URL após capturá-lo para evitar exposição em históricos
+3. Definir tempos de expiração adequados para os tokens JWT
+4. Implementar refresh tokens para sessões de longa duração (opcional)
+
+## PRÓXIMOS PASSOS APÓS IMPLEMENTAÇÃO
+1. Testar o fluxo completo de autenticação
+2. Verificar o funcionamento em diferentes navegadores
+3. Confirmar que o redirecionamento funciona corretamente em produção
+4. Adicionar tratamento de erros para casos onde a autenticação falha 

@@ -88,35 +88,55 @@ def save_cases_data(data: Dict[str, Any]) -> None:
         json.dump(data, f, ensure_ascii=False, indent=4)
 
 
-def list_cases() -> List[Dict[str, str]]:
+def list_cases() -> List[str]:
     """
     Lista todas as caixas suportadas pela API.
     
     Returns:
-        Lista de dicionários com informações básicas de cada caixa
+        Lista com os nomes das caixas disponíveis
     """
-    cases_data = load_cases_data()
-    result = []
-    
-    for case_id, case_info in cases_data.get("cases", {}).items():
-        result.append({
-            "id": case_id,
-            "name": case_info.get("name", "Unknown"),
-            "image": case_info.get("image", "")
-        })
-    
-    return result
+    try:
+        cases_data = load_cases_data()
+        
+        # Verificar se o formato do arquivo é válido
+        if not isinstance(cases_data, dict) or "cases" not in cases_data:
+            print("Erro: Formato inválido no arquivo de caixas")
+            return []
+            
+        # Retornar apenas os nomes das caixas para maior compatibilidade com o frontend
+        result = []
+        
+        for case_id, case_info in cases_data.get("cases", {}).items():
+            case_name = case_info.get("name", "")
+            if case_name:  # Adiciona apenas se o nome não estiver vazio
+                result.append(case_name)
+                
+        # Verificar se encontrou alguma caixa
+        if not result:
+            print("Aviso: Nenhuma caixa encontrada no arquivo")
+            
+        print(f"Total de caixas encontradas: {len(result)}")
+        print(f"Caixas: {', '.join(result)}")
+        
+        return result
+    except Exception as e:
+        import traceback
+        print(f"Erro ao listar caixas: {e}")
+        traceback.print_exc()
+        # Em caso de erro, retornar uma lista vazia em vez de propagar o erro
+        return []
 
 
 def get_case_details(case_name: str) -> Dict[str, Any]:
     """
-    Obtém detalhes sobre uma caixa específica, incluindo itens possíveis e valor esperado.
+    Obtém detalhes sobre uma caixa específica, incluindo apenas seu preço de mercado.
+    Não analisa mais o conteúdo interno das caixas (itens possíveis).
     
     Args:
         case_name: Nome ou ID da caixa
         
     Returns:
-        Dicionário com detalhes da caixa, itens e valor esperado
+        Dicionário com detalhes básicos da caixa (nome, imagem, preço)
     
     Raises:
         Exception: Se a caixa não for encontrada
@@ -136,55 +156,15 @@ def get_case_details(case_name: str) -> Dict[str, Any]:
     if not case_info:
         raise Exception(f"Caixa '{case_name}' não encontrada")
     
-    # Obter o preço atual da caixa
+    # Obter apenas o preço atual da caixa no mercado
     case_price = get_item_price(case_info.get("name", ""))
     
-    # Calcular o valor esperado dos itens da caixa
-    items_with_prices = []
-    total_expected_value = 0.0
-    
-    for item in case_info.get("items", []):
-        item_name = item.get("name", "")
-        item_probability = item.get("probability", 0)
-        item_price = get_item_price(item_name)
-        
-        # Adiciona o item com seu preço à lista
-        items_with_prices.append({
-            "name": item_name,
-            "rarity": item.get("rarity", ""),
-            "probability": item_probability,
-            "price": item_price
-        })
-        
-        # Adiciona ao valor esperado total (preço * probabilidade)
-        total_expected_value += item_price * item_probability
-    
-    # Probabilidade de faca/luva (estimada)
-    knife_probability = 0.0025  # 0.25%
-    avg_knife_price = 1500.0  # Preço médio estimado de facas
-    
-    # Adiciona o valor esperado de facas/luvas
-    knife_expected_value = knife_probability * avg_knife_price
-    total_expected_value += knife_expected_value
-    
-    # Calcular o EV com fator de chave (se aplicável)
-    requires_key = True  # A maioria das caixas requer chave
-    key_price = 6.50 if requires_key else 0  # Preço estimado da chave
-    
-    # Cálculo do valor esperado final
-    net_expected_value = total_expected_value - case_price - key_price
-    roi_percentage = (total_expected_value / (case_price + key_price) - 1) * 100 if (case_price + key_price) > 0 else 0
-    
+    # Retornar informações básicas sem análise de conteúdo interno
     return {
         "name": case_info.get("name", ""),
         "image": case_info.get("image", ""),
         "price": case_price,
-        "requires_key": requires_key,
-        "key_price": key_price if requires_key else 0,
-        "items": items_with_prices,
-        "expected_value": total_expected_value,
-        "net_expected_value": net_expected_value,
-        "roi_percentage": roi_percentage,
-        "knife_probability": knife_probability,
-        "avg_knife_value": avg_knife_price
+        "item_type": "premium_case",  # Adicionar tipo para identificação
+        "source": "market",  # Indicar que é um item do mercado
+        "requires_key": True  # A maioria das caixas requer chave
     }
