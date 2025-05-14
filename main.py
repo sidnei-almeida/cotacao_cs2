@@ -2,7 +2,7 @@ from fastapi import FastAPI, HTTPException, Query, Request, Depends, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 from fastapi.security import OAuth2PasswordBearer
-from fastapi.middleware.base import BaseHTTPMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
 from typing import List, Dict, Any, Optional
 import uvicorn
 import jwt
