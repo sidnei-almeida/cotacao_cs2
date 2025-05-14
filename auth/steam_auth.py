@@ -3,9 +3,10 @@ from urllib.parse import urlencode
 import requests
 import jwt
 from datetime import datetime, timedelta
+import os
 
 # Configurações para JWT
-SECRET_KEY = "sua_chave_secreta_muito_longa_e_segura"  # Em produção, use variável de ambiente
+SECRET_KEY = os.environ.get("JWT_SECRET_KEY", "sua_chave_secreta_muito_longa_e_segura")  # Usar variável de ambiente
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 24 horas
 

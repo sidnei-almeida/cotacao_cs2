@@ -29,22 +29,33 @@ app = FastAPI(
 )
 
 # Configurar CORS
+ALLOWED_ORIGINS = [
+    "http://localhost:5500",   # Desenvolvimento local
+    "http://127.0.0.1:5500",   # Desenvolvimento local alternativo
+    "https://elite-skins-2025.github.io",  # GitHub Pages
+    "file://"  # Para suportar arquivos abertos localmente
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5500",  # Desenvolvimento local
-        "https://elite-skins-2025.github.io"  # GitHub Pages
-    ],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # Função auxiliar para aplicar headers CORS consistentemente
-def apply_cors_headers(response: Response):
+def apply_cors_headers(response: Response, request: Request = None):
     """Aplica cabeçalhos CORS de forma consistente em todas as respostas"""
-    # Permitir ambas origens
-    origin = "http://localhost:5500"
+    # Identificar a origem correta
+    origin = "*"
+    
+    if request and request.headers.get("origin"):
+        requested_origin = request.headers.get("origin")
+        # Verificar se a origem está na lista de permitidas
+        if requested_origin in ALLOWED_ORIGINS:
+            origin = requested_origin
+    
     response.headers["Access-Control-Allow-Origin"] = origin
     response.headers["Access-Control-Allow-Credentials"] = "true"
     response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS, DELETE, PUT, PATCH"
@@ -99,13 +110,10 @@ async def root():
 
 
 @app.get("/inventory/{steamid}")
-async def inventory(steamid: str, response: Response):
+async def inventory(steamid: str, response: Response, request: Request = None):
     """Retorna os itens e preços estimados do inventário público, diferenciando entre Unidades de Armazenamento e itens do mercado"""
     # Adicionar cabeçalhos CORS manualmente para garantir compatibilidade
-    response.headers["Access-Control-Allow-Origin"] = "http://localhost:5500"
-    response.headers["Access-Control-Allow-Credentials"] = "true"
-    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
-    response.headers["Access-Control-Allow-Headers"] = "*"
+    apply_cors_headers(response, request)
     
     try:
         print(f"Iniciando análise de inventário para {steamid}")
@@ -177,15 +185,12 @@ async def inventory(steamid: str, response: Response):
 
 
 @app.get("/inventory/full/{steamid}")
-async def full_inventory_analysis(steamid: str, response: Response):
+async def full_inventory_analysis(steamid: str, response: Response, request: Request = None):
     """
     Retorna análise completa do inventário incluindo valor dos itens e classificação por fonte
     """
     # Adicionar cabeçalhos CORS manualmente para garantir compatibilidade
-    response.headers["Access-Control-Allow-Origin"] = "http://localhost:5500"
-    response.headers["Access-Control-Allow-Credentials"] = "true"
-    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
-    response.headers["Access-Control-Allow-Headers"] = "*"
+    apply_cors_headers(response, request)
     
     try:
         # Obter inventário básico
@@ -273,10 +278,10 @@ async def full_inventory_analysis(steamid: str, response: Response):
 
 
 @app.get("/case/{case_name}")
-async def case(case_name: str, response: Response):
-    """Retorna o preço atual da caixa no mercado"""
-    # Aplicar cabeçalhos CORS
-    apply_cors_headers(response)
+async def case(case_name: str, response: Response, request: Request = None):
+    """Retorna detalhes sobre uma determinada caixa"""
+    # Adicionar cabeçalhos CORS manualmente para garantir compatibilidade
+    apply_cors_headers(response, request)
     
     try:
         print(f"Buscando preço para caixa: {case_name}")
@@ -302,10 +307,10 @@ async def case(case_name: str, response: Response):
 
 
 @app.get("/price/{market_hash_name}")
-async def price(market_hash_name: str, response: Response):
-    """Retorna o preço médio atual do item no Steam Market (via scraping)"""
-    # Aplicar cabeçalhos CORS
-    apply_cors_headers(response)
+async def price(market_hash_name: str, response: Response, request: Request = None):
+    """Retorna o preço de um item específico"""
+    # Adicionar cabeçalhos CORS manualmente para garantir compatibilidade
+    apply_cors_headers(response, request)
     
     try:
         print(f"Buscando preço para: {market_hash_name}")
@@ -319,10 +324,10 @@ async def price(market_hash_name: str, response: Response):
 
 
 @app.get("/cases")
-async def cases(response: Response):
-    """Lista todas as caixas suportadas pela API"""
-    # Aplicar cabeçalhos CORS
-    apply_cors_headers(response)
+async def cases(response: Response, request: Request = None):
+    """Retorna a lista de caixas disponíveis"""
+    # Adicionar cabeçalhos CORS manualmente para garantir compatibilidade
+    apply_cors_headers(response, request)
     
     try:
         # Obter lista de caixas
@@ -346,19 +351,10 @@ async def cases(response: Response):
 
 
 @app.get("/api/status")
-async def api_status(response: Response):
-    """
-    Verifica o status da API e seus recursos.
-    
-    - Monitoramento: Verifica todos os componentes e disponibilidade
-    - Versão: Retorna a versão atual da API
-    - Cache: Estatísticas do uso de cache
-    """
+async def api_status(response: Response, request: Request = None):
+    """Retorna o status da API"""
     # Adicionar cabeçalhos CORS manualmente para garantir compatibilidade
-    response.headers["Access-Control-Allow-Origin"] = "http://localhost:5500"
-    response.headers["Access-Control-Allow-Credentials"] = "true"
-    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
-    response.headers["Access-Control-Allow-Headers"] = "*"
+    apply_cors_headers(response, request)
     
     try:
         # Obter status da API do Steam
@@ -458,19 +454,32 @@ async def steam_callback(request: Request):
     # Extrair parâmetros da resposta
     params = dict(request.query_params)
     
+    # Verificar se deve redirecionar para local
+    redirect_local = "redirect_local" in params and params["redirect_local"] == "true"
+    
     # Validar autenticação
     steam_id = validate_steam_login(params)
     if steam_id:
         # Gerar token JWT
         token = create_jwt_token({"steam_id": steam_id})
         
-        # Se estamos rodando localmente, sempre redirecionar para localhost
-        # Definir frontend_url diretamente para localhost
-        frontend_url = "http://localhost:5500/api.html"
+        # Definir URL de frontend baseado no parâmetro redirect_local
+        if redirect_local:
+            # Ambiente de desenvolvimento local
+            frontend_url = "http://localhost:5500/api.html"
+            print(f"Redirecionando para: {frontend_url}?token={token}")
+            print(f"Ambiente: Desenvolvimento local")
+        else:
+            # Ambiente de produção
+            frontend_url = "https://elite-skins-2025.github.io/api.html"
+            print(f"Redirecionando para: {frontend_url}?token={token}")
+            print(f"Ambiente: Produção")
         
-        # Para debugging no console
-        print(f"Redirecionando para: {frontend_url}?token={token}")
-        print(f"Ambiente: Desenvolvimento local forçado")
+        # Receber URL de retorno personalizado, se fornecido
+        custom_return_url = params.get("return_url")
+        if custom_return_url:
+            frontend_url = custom_return_url
+            print(f"Usando URL de retorno personalizado: {frontend_url}")
         
         # Redirecionar para o frontend com o token como parâmetro
         redirect_url = f"{frontend_url}?token={token}"
@@ -819,7 +828,7 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
     
     print("Starting server with CORS configuration enabled:")
-    print(f"- Allowed origins: {['http://localhost:5500', 'https://elite-skins-2025.github.io']}")
+    print(f"- Allowed origins: {ALLOWED_ORIGINS}")
     print("- CORS middleware and options handler configured")
     print("- Custom CORS headers middleware added")
     
