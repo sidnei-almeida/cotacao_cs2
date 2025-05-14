@@ -10,3 +10,6 @@ python-multipart>=0.0.5
 pyjwt>=2.8.0
 python-openid>=2.2.5
 gunicorn>=20.1.0
+numpy>=1.24.0
+schedule>=1.2.0
+psycopg2-binary>=2.9.5

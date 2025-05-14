@@ -15,6 +15,8 @@ from services.steam_inventory import get_inventory_value, get_storage_unit_conte
 from services.case_evaluator import get_case_details, list_cases
 from services.steam_market import get_item_price, get_api_status
 from utils.config import get_api_config
+from utils.database import init_db, get_stats
+from utils.price_updater import run_scheduler, force_update_now, get_scheduler_status, schedule_weekly_update
 from auth.steam_auth import steam_login_url, validate_steam_login, create_jwt_token, verify_jwt_token, SECRET_KEY, ALGORITHM
 
 # Configuração de autenticação OAuth2
@@ -26,51 +28,28 @@ app = FastAPI(
     version="0.4.0"  # Atualizada para versão com organização por origem dos itens
 )
 
+# Configurar CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:5500",  # Desenvolvimento local
+        "https://elite-skins-2025.github.io"  # GitHub Pages
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 # Função auxiliar para aplicar headers CORS consistentemente
 def apply_cors_headers(response: Response):
     """Aplica cabeçalhos CORS de forma consistente em todas as respostas"""
-    response.headers["Access-Control-Allow-Origin"] = "https://elite-skins-2025.github.io"
+    # Permitir ambas origens
+    origin = "http://localhost:5500"
+    response.headers["Access-Control-Allow-Origin"] = origin
     response.headers["Access-Control-Allow-Credentials"] = "true"
-    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
-    response.headers["Access-Control-Allow-Headers"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS, DELETE, PUT, PATCH"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, Accept, X-Requested-With"
     return response
-
-# Middleware para adicionar cabeçalhos CORS a todas as respostas
-class CorsHeadersMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next):
-        response = await call_next(request)
-        # Adicionar cabeçalhos CORS a todas as respostas
-        response.headers["Access-Control-Allow-Origin"] = "https://elite-skins-2025.github.io"
-        response.headers["Access-Control-Allow-Credentials"] = "true"
-        response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
-        response.headers["Access-Control-Allow-Headers"] = "*"
-        return response
-
-# Configuração de CORS para permitir requisições do frontend - Atualizada
-origins = [
-    "http://localhost:5500",  # Desenvolvimento local
-    "https://elite-skins-2025.github.io",  # GitHub Pages
-    "elite-skins-2025.github.io"  # Adicionado sem https para garantir compatibilidade
-]
-
-# Adicionar o middleware CORS antes de outros middlewares
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=origins,
-    allow_credentials=True,
-    allow_methods=["GET", "POST", "OPTIONS", "DELETE", "PUT", "PATCH"],  # Especificando métodos explicitamente
-    allow_headers=["*"],
-    expose_headers=["Content-Type", "Authorization"],  # Expondo cabeçalhos importantes
-    max_age=86400,  # Cache de preflight por 24 horas
-)
-
-# Adicionar middleware personalizado para garantir cabeçalhos CORS em todas as respostas
-app.add_middleware(CorsHeadersMiddleware)
-
-# Adicionar middleware para garantir que OPTIONS seja tratado corretamente
-@app.options("/{path:path}")
-async def options_route(path: str, request: Request):
-    return {}  # Retorna resposta vazia para que o middleware CORS lide com OPTIONS
 
 # Lista de endpoints para a página inicial
 AVAILABLE_ENDPOINTS = [
@@ -123,7 +102,7 @@ async def root():
 async def inventory(steamid: str, response: Response):
     """Retorna os itens e preços estimados do inventário público, diferenciando entre Unidades de Armazenamento e itens do mercado"""
     # Adicionar cabeçalhos CORS manualmente para garantir compatibilidade
-    response.headers["Access-Control-Allow-Origin"] = "https://elite-skins-2025.github.io"
+    response.headers["Access-Control-Allow-Origin"] = "http://localhost:5500"
     response.headers["Access-Control-Allow-Credentials"] = "true"
     response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
     response.headers["Access-Control-Allow-Headers"] = "*"
@@ -203,7 +182,7 @@ async def full_inventory_analysis(steamid: str, response: Response):
     Retorna análise completa do inventário incluindo valor dos itens e classificação por fonte
     """
     # Adicionar cabeçalhos CORS manualmente para garantir compatibilidade
-    response.headers["Access-Control-Allow-Origin"] = "https://elite-skins-2025.github.io"
+    response.headers["Access-Control-Allow-Origin"] = "http://localhost:5500"
     response.headers["Access-Control-Allow-Credentials"] = "true"
     response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
     response.headers["Access-Control-Allow-Headers"] = "*"
@@ -368,73 +347,105 @@ async def cases(response: Response):
 
 @app.get("/api/status")
 async def api_status(response: Response):
-    """Verifica o status do sistema e configurações"""
-    # Aplicar cabeçalhos CORS
-    apply_cors_headers(response)
+    """
+    Verifica o status da API e seus recursos.
+    
+    - Monitoramento: Verifica todos os componentes e disponibilidade
+    - Versão: Retorna a versão atual da API
+    - Cache: Estatísticas do uso de cache
+    """
+    # Adicionar cabeçalhos CORS manualmente para garantir compatibilidade
+    response.headers["Access-Control-Allow-Origin"] = "http://localhost:5500"
+    response.headers["Access-Control-Allow-Credentials"] = "true"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "*"
     
     try:
-        # Obter status das configurações gerais
-        config_status = get_api_config()
+        # Obter status da API do Steam
+        api_check = get_api_status()
         
-        # Testar conexão com as APIs e sistema de scraping
-        api_test_results = get_api_status()
+        # Obter estatísticas do banco de dados
+        db_stats = get_stats()
+        
+        # Obter status do agendador de atualizações
+        scheduler_status = get_scheduler_status()
         
         return {
-            "version": "0.5.0 (Storage Unit Access)",
-            "features": [
-                "Scraping exclusivo para preços", 
-                "Classificação por origem (Unidade/Mercado)",
-                "Acesso ao conteúdo das Unidades de Armazenamento",
-                "Autenticação via Steam OpenID"
-            ],
-            "config": config_status,
-            "connection_test": api_test_results,
-            "api_key_status": "Configurada" if config_status.get("steam_api_key") != "Não configurada" else "Não configurada"
+            "status": "online",
+            "version": "0.5.0",
+            "timestamp": datetime.datetime.now().isoformat(),
+            "components": {
+                "api": api_check,
+                "database": db_stats,
+                "scheduler": scheduler_status
+            },
+            "uptime": "N/A"  # Em implementação futura
         }
     except Exception as e:
         print(f"Erro ao verificar status da API: {e}")
         import traceback
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail=str(e))
+        
+        # Retornar erro
+        return {
+            "status": "partial_outage",
+            "error": str(e),
+            "timestamp": datetime.datetime.now().isoformat()
+        }
 
 
 # Funções para autenticação
 def get_current_user(token: str = Depends(oauth2_scheme)):
     """Obtém o usuário atual baseado no token JWT"""
     if not token:
+        print("Token não fornecido na requisição")
         # Retornar None para permitir que o endpoint decida como lidar com ausência de token
         return None
         
     try:
+        print(f"Tentando validar token: {token[:10]}...")
+        
         # Decodificar o token manualmente com tratamento de erro melhorado
         try:
             payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+            print("Token decodificado com sucesso")
         except jwt.ExpiredSignatureError:
+            print("Erro: Token expirado")
             return {"error": "Token expirado. Faça login novamente."}
         except jwt.InvalidTokenError:
+            print("Erro: Token inválido")
             return {"error": "Token inválido. Formato incorreto."}
         except Exception as e:
+            print(f"Erro desconhecido ao decodificar token: {e}")
             return {"error": f"Erro ao processar token: {str(e)}"}
             
         # Verificar se o payload contém o steam_id
         steam_id = payload.get("steam_id")
         if not steam_id:
+            print("Erro: Token não contém SteamID")
             return {"error": "Token não contém SteamID"}
             
         # Retornar informações do usuário
+        print(f"Usuário autenticado com SteamID: {steam_id}")
         return {"steam_id": steam_id}
     except Exception as e:
-        print(f"Erro na autenticação: {e}")
+        print(f"Erro inesperado na autenticação: {e}")
+        import traceback
+        traceback.print_exc()
         return {"error": f"Erro na autenticação: {str(e)}"}
 
 
 # Endpoints para autenticação com a Steam
 @app.get("/auth/steam")
-async def steam_auth(request: Request):
+async def steam_auth(request: Request, redirect_local: bool = False):
     """Redireciona para o login da Steam"""
     # URL base para a API
     base_url = str(request.base_url).rstrip('/')
     redirect_uri = f"{base_url}/auth/steam/callback"
+    
+    # Adicionar parâmetro para indicar redirecionamento local
+    if redirect_local:
+        redirect_uri += "?redirect_local=true"
     
     # Gerar URL de login
     login_url = steam_login_url(redirect_uri)
@@ -453,15 +464,13 @@ async def steam_callback(request: Request):
         # Gerar token JWT
         token = create_jwt_token({"steam_id": steam_id})
         
-        # URL do frontend
-        # Detectar se estamos em ambiente de produção ou desenvolvimento
-        host = str(request.headers.get("host", ""))
-        if "localhost" in host or "127.0.0.1" in host:
-            # Ambiente de desenvolvimento local
-            frontend_url = "http://localhost:5500/api.html"
-        else:
-            # Ambiente de produção (GitHub Pages)
-            frontend_url = "https://elite-skins-2025.github.io/api.html"
+        # Se estamos rodando localmente, sempre redirecionar para localhost
+        # Definir frontend_url diretamente para localhost
+        frontend_url = "http://localhost:5500/api.html"
+        
+        # Para debugging no console
+        print(f"Redirecionando para: {frontend_url}?token={token}")
+        print(f"Ambiente: Desenvolvimento local forçado")
         
         # Redirecionar para o frontend com o token como parâmetro
         redirect_url = f"{frontend_url}?token={token}"
@@ -573,97 +582,166 @@ async def _complete_inventory_analysis(
 
 # Novos endpoints para o usuário autenticado
 @app.get("/my/inventory")
-async def my_inventory(current_user: dict = Depends(get_current_user)):
+async def my_inventory(current_user: dict = Depends(get_current_user), response: Response = None):
     """Retorna os itens e preços estimados do inventário do usuário autenticado"""
-    # Verificar se o usuário está autenticado
-    if not current_user:
-        raise HTTPException(
-            status_code=401,
-            detail="Autenticação necessária para acessar este endpoint. Adicione o token JWT no cabeçalho Authorization: Bearer [seu_token]"
-        )
-    
-    # Verificar se há erro de autenticação
-    if "error" in current_user:
-        raise HTTPException(
-            status_code=401,
-            detail=current_user["error"]
-        )
-    
-    # Reutiliza a função de inventário existente com o steamid do usuário autenticado
-    steamid = current_user["steam_id"]
-    return await inventory(steamid)
+    # Aplicar cabeçalhos CORS
+    if response:
+        response.headers["Access-Control-Allow-Origin"] = "http://localhost:5500"
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "*"
+        
+    try:
+        # Verificar se o usuário está autenticado
+        if not current_user:
+            raise HTTPException(
+                status_code=401,
+                detail="Autenticação necessária para acessar este endpoint. Adicione o token JWT no cabeçalho Authorization: Bearer [seu_token]"
+            )
+        
+        # Verificar se há erro de autenticação
+        if "error" in current_user:
+            raise HTTPException(
+                status_code=401,
+                detail=current_user["error"]
+            )
+        
+        # Reutiliza a função de inventário existente com o steamid do usuário autenticado
+        steamid = current_user["steam_id"]
+        print(f"Analisando inventário do usuário autenticado: {steamid}")
+        return await inventory(steamid, response)
+    except Exception as e:
+        print(f"Erro no endpoint /my/inventory: {e}")
+        import traceback
+        traceback.print_exc()
+        # Retornar um objeto com informação de erro que o frontend pode interpretar
+        return {
+            "error": str(e),
+            "total_items": 0,
+            "total_value": 0,
+            "items": [],
+            "storage_units": [],
+            "market_items": []
+        }
 
 
 @app.get("/my/inventory/complete")
 async def my_inventory_complete(
     current_user: dict = Depends(get_current_user),
     session_id: str = Query(None),
-    steam_token: str = Query(None)
+    steam_token: str = Query(None),
+    response: Response = None
 ):
     """
     Retorna análise completa do inventário do usuário autenticado incluindo o conteúdo das
     Unidades de Armazenamento.
     """
-    # Verificar se o usuário está autenticado
-    if not current_user:
-        raise HTTPException(
-            status_code=401,
-            detail="Autenticação necessária para acessar este endpoint. Adicione o token JWT no cabeçalho Authorization: Bearer [seu_token]"
+    # Aplicar cabeçalhos CORS
+    if response:
+        response.headers["Access-Control-Allow-Origin"] = "http://localhost:5500"
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "*"
+        
+    try:
+        # Verificar se o usuário está autenticado
+        if not current_user:
+            raise HTTPException(
+                status_code=401,
+                detail="Autenticação necessária para acessar este endpoint. Adicione o token JWT no cabeçalho Authorization: Bearer [seu_token]"
+            )
+        
+        # Verificar se há erro de autenticação
+        if "error" in current_user:
+            raise HTTPException(
+                status_code=401,
+                detail=current_user["error"]
+            )
+        
+        # Verificar se todos os parâmetros necessários foram fornecidos
+        if not session_id or not steam_token:
+            raise HTTPException(
+                status_code=400,
+                detail="session_id e steam_token são necessários para acessar Unidades de Armazenamento"
+            )
+        
+        # Reutiliza a função interna com o steamid do usuário autenticado
+        steamid = current_user["steam_id"]
+        print(f"Analisando inventário completo do usuário autenticado: {steamid}")
+        return await _complete_inventory_analysis(
+            steamid=steamid,
+            current_user=current_user,
+            session_id=session_id,
+            steam_token=steam_token
         )
-    
-    # Verificar se há erro de autenticação
-    if "error" in current_user:
-        raise HTTPException(
-            status_code=401,
-            detail=current_user["error"]
-        )
-    
-    # Verificar se todos os parâmetros necessários foram fornecidos
-    if not session_id or not steam_token:
-        raise HTTPException(
-            status_code=400,
-            detail="session_id e steam_token são necessários para acessar Unidades de Armazenamento"
-        )
-    
-    # Reutiliza a função interna com o steamid do usuário autenticado
-    steamid = current_user["steam_id"]
-    return await _complete_inventory_analysis(
-        steamid=steamid,
-        current_user=current_user,
-        session_id=session_id,
-        steam_token=steam_token
-    )
+    except Exception as e:
+        print(f"Erro no endpoint /my/inventory/complete: {e}")
+        import traceback
+        traceback.print_exc()
+        # Retornar um objeto com informação de erro que o frontend pode interpretar
+        return {
+            "error": str(e),
+            "total_items": 0,
+            "total_value": 0,
+            "items": [],
+            "storage_units": [],
+            "market_items": [],
+            "storage_unit_contents": []
+        }
 
 
 @app.get("/my/inventory/full")
-async def my_inventory_full(current_user: dict = Depends(get_current_user)):
+async def my_inventory_full(current_user: dict = Depends(get_current_user), response: Response = None):
     """
     Retorna análise completa do inventário do usuário autenticado por categoria.
     """
-    # Verificar se o usuário está autenticado
-    if not current_user:
-        raise HTTPException(
-            status_code=401,
-            detail="Autenticação necessária para acessar este endpoint. Adicione o token JWT no cabeçalho Authorization: Bearer [seu_token]"
-        )
-    
-    # Verificar se há erro de autenticação
-    if "error" in current_user:
-        raise HTTPException(
-            status_code=401,
-            detail=current_user["error"]
-        )
-    
-    # Reutiliza a função de inventário detalhado com o steamid do usuário autenticado
-    steamid = current_user["steam_id"]
-    return await full_inventory_analysis(steamid)
+    # Aplicar cabeçalhos CORS
+    if response:
+        response.headers["Access-Control-Allow-Origin"] = "http://localhost:5500"
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "*"
+        
+    try:
+        # Verificar se o usuário está autenticado
+        if not current_user:
+            raise HTTPException(
+                status_code=401,
+                detail="Autenticação necessária para acessar este endpoint. Adicione o token JWT no cabeçalho Authorization: Bearer [seu_token]"
+            )
+        
+        # Verificar se há erro de autenticação
+        if "error" in current_user:
+            raise HTTPException(
+                status_code=401,
+                detail=current_user["error"]
+            )
+        
+        # Reutiliza a função de inventário detalhado com o steamid do usuário autenticado
+        steamid = current_user["steam_id"]
+        print(f"Analisando inventário categorizado do usuário autenticado: {steamid}")
+        return await full_inventory_analysis(steamid, response)
+    except Exception as e:
+        print(f"Erro no endpoint /my/inventory/full: {e}")
+        import traceback
+        traceback.print_exc()
+        # Retornar um objeto com informação de erro que o frontend pode interpretar
+        return {
+            "error": str(e),
+            "total_items": 0,
+            "total_value": 0,
+            "items": [],
+            "storage_units": [],
+            "market_items": [],
+            "category_summary": {}
+        }
 
 
 @app.get("/cors-test")
 async def cors_test(response: Response):
     """Endpoint simples para testar cabeçalhos CORS"""
     # Adicionar cabeçalhos CORS manualmente
-    response.headers["Access-Control-Allow-Origin"] = "https://elite-skins-2025.github.io"
+    response.headers["Access-Control-Allow-Origin"] = "http://localhost:5500"
     response.headers["Access-Control-Allow-Credentials"] = "true"
     response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
     response.headers["Access-Control-Allow-Headers"] = "*"
@@ -672,8 +750,65 @@ async def cors_test(response: Response):
         "cors_status": "OK",
         "message": "Se você conseguir ver esta mensagem, os cabeçalhos CORS estão funcionando corretamente",
         "timestamp": str(datetime.datetime.now()),
-        "origin": "https://elite-skins-2025.github.io"
+        "origin": "http://localhost:5500"
     }
+
+
+@app.get("/db/stats")
+async def db_stats(current_user: dict = Depends(get_current_user)):
+    """
+    Retorna estatísticas do banco de dados de preços de skins.
+    Requer autenticação.
+    """
+    # Verificar se o usuário está autenticado
+    if not current_user:
+        raise HTTPException(status_code=401, detail="Autenticação necessária")
+    
+    # Obter estatísticas do banco de dados
+    stats = get_stats()
+    
+    # Obter status do agendador
+    scheduler_status = get_scheduler_status()
+    
+    return {
+        "database": stats,
+        "scheduler": scheduler_status
+    }
+
+@app.post("/db/update")
+async def force_db_update(current_user: dict = Depends(get_current_user), max_items: int = Query(100, description="Número máximo de itens para atualizar")):
+    """
+    Força uma atualização imediata dos preços das skins mais antigas.
+    Requer autenticação.
+    """
+    # Verificar se o usuário está autenticado
+    if not current_user:
+        raise HTTPException(status_code=401, detail="Autenticação necessária")
+    
+    # Forçar atualização
+    stats = force_update_now(max_items=max_items)
+    
+    return {
+        "message": f"Atualização forçada concluída. {stats['updated_skins']} itens atualizados.",
+        "stats": stats
+    }
+
+# Inicialização da aplicação
+@app.on_event("startup")
+async def startup_event():
+    """
+    Inicializa recursos na inicialização da aplicação.
+    """
+    # Inicializar o banco de dados SQLite
+    init_db()
+    print("Banco de dados SQLite inicializado com sucesso!")
+    
+    # Configurar a atualização semanal dos preços (Segunda-feira às 3:00)
+    schedule_weekly_update(day_of_week=0, hour=3, minute=0)
+    
+    # Iniciar o agendador em uma thread separada
+    run_scheduler()
+    print("Agendador de atualização de preços iniciado!")
 
 
 if __name__ == "__main__":
@@ -684,7 +819,7 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
     
     print("Starting server with CORS configuration enabled:")
-    print(f"- Allowed origins: {origins}")
+    print(f"- Allowed origins: {['http://localhost:5500', 'https://elite-skins-2025.github.io']}")
     print("- CORS middleware and options handler configured")
     print("- Custom CORS headers middleware added")
     
