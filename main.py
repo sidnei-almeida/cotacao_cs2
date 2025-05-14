@@ -1,12 +1,14 @@
-from fastapi import FastAPI, HTTPException, Query, Request, Depends
+from fastapi import FastAPI, HTTPException, Query, Request, Depends, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 from fastapi.security import OAuth2PasswordBearer
+from fastapi.middleware.base import BaseHTTPMiddleware
 from typing import List, Dict, Any, Optional
 import uvicorn
 import jwt
 from jwt.exceptions import PyJWTError
 import os
+import datetime
 
 # Importando serviços e configurações
 from services.steam_inventory import get_inventory_value, get_storage_unit_contents
@@ -24,17 +26,51 @@ app = FastAPI(
     version="0.4.0"  # Atualizada para versão com organização por origem dos itens
 )
 
-# Configuração de CORS para permitir requisições do frontend
+# Função auxiliar para aplicar headers CORS consistentemente
+def apply_cors_headers(response: Response):
+    """Aplica cabeçalhos CORS de forma consistente em todas as respostas"""
+    response.headers["Access-Control-Allow-Origin"] = "https://elite-skins-2025.github.io"
+    response.headers["Access-Control-Allow-Credentials"] = "true"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "*"
+    return response
+
+# Middleware para adicionar cabeçalhos CORS a todas as respostas
+class CorsHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        # Adicionar cabeçalhos CORS a todas as respostas
+        response.headers["Access-Control-Allow-Origin"] = "https://elite-skins-2025.github.io"
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "*"
+        return response
+
+# Configuração de CORS para permitir requisições do frontend - Atualizada
+origins = [
+    "http://localhost:5500",  # Desenvolvimento local
+    "https://elite-skins-2025.github.io",  # GitHub Pages
+    "elite-skins-2025.github.io"  # Adicionado sem https para garantir compatibilidade
+]
+
+# Adicionar o middleware CORS antes de outros middlewares
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5500",  # Desenvolvimento local
-        "https://elite-skins-2025.github.io"  # GitHub Pages
-    ],
+    allow_origins=origins,
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "OPTIONS", "DELETE", "PUT", "PATCH"],  # Especificando métodos explicitamente
     allow_headers=["*"],
+    expose_headers=["Content-Type", "Authorization"],  # Expondo cabeçalhos importantes
+    max_age=86400,  # Cache de preflight por 24 horas
 )
+
+# Adicionar middleware personalizado para garantir cabeçalhos CORS em todas as respostas
+app.add_middleware(CorsHeadersMiddleware)
+
+# Adicionar middleware para garantir que OPTIONS seja tratado corretamente
+@app.options("/{path:path}")
+async def options_route(path: str, request: Request):
+    return {}  # Retorna resposta vazia para que o middleware CORS lide com OPTIONS
 
 # Lista de endpoints para a página inicial
 AVAILABLE_ENDPOINTS = [
@@ -84,8 +120,14 @@ async def root():
 
 
 @app.get("/inventory/{steamid}")
-async def inventory(steamid: str):
+async def inventory(steamid: str, response: Response):
     """Retorna os itens e preços estimados do inventário público, diferenciando entre Unidades de Armazenamento e itens do mercado"""
+    # Adicionar cabeçalhos CORS manualmente para garantir compatibilidade
+    response.headers["Access-Control-Allow-Origin"] = "https://elite-skins-2025.github.io"
+    response.headers["Access-Control-Allow-Credentials"] = "true"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "*"
+    
     try:
         print(f"Iniciando análise de inventário para {steamid}")
         result = get_inventory_value(steamid)
@@ -156,10 +198,16 @@ async def inventory(steamid: str):
 
 
 @app.get("/inventory/full/{steamid}")
-async def full_inventory_analysis(steamid: str):
+async def full_inventory_analysis(steamid: str, response: Response):
     """
     Retorna análise completa do inventário incluindo valor dos itens e classificação por fonte
     """
+    # Adicionar cabeçalhos CORS manualmente para garantir compatibilidade
+    response.headers["Access-Control-Allow-Origin"] = "https://elite-skins-2025.github.io"
+    response.headers["Access-Control-Allow-Credentials"] = "true"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "*"
+    
     try:
         # Obter inventário básico
         inventory_result = get_inventory_value(steamid)
@@ -246,8 +294,11 @@ async def full_inventory_analysis(steamid: str):
 
 
 @app.get("/case/{case_name}")
-async def case(case_name: str):
+async def case(case_name: str, response: Response):
     """Retorna o preço atual da caixa no mercado"""
+    # Aplicar cabeçalhos CORS
+    apply_cors_headers(response)
+    
     try:
         print(f"Buscando preço para caixa: {case_name}")
         result = get_case_details(case_name)
@@ -272,8 +323,11 @@ async def case(case_name: str):
 
 
 @app.get("/price/{market_hash_name}")
-async def price(market_hash_name: str):
+async def price(market_hash_name: str, response: Response):
     """Retorna o preço médio atual do item no Steam Market (via scraping)"""
+    # Aplicar cabeçalhos CORS
+    apply_cors_headers(response)
+    
     try:
         print(f"Buscando preço para: {market_hash_name}")
         result = get_item_price(market_hash_name)
@@ -286,8 +340,11 @@ async def price(market_hash_name: str):
 
 
 @app.get("/cases")
-async def cases():
+async def cases(response: Response):
     """Lista todas as caixas suportadas pela API"""
+    # Aplicar cabeçalhos CORS
+    apply_cors_headers(response)
+    
     try:
         # Obter lista de caixas
         result = list_cases()
@@ -310,8 +367,11 @@ async def cases():
 
 
 @app.get("/api/status")
-async def api_status():
+async def api_status(response: Response):
     """Verifica o status do sistema e configurações"""
+    # Aplicar cabeçalhos CORS
+    apply_cors_headers(response)
+    
     try:
         # Obter status das configurações gerais
         config_status = get_api_config()
@@ -599,6 +659,23 @@ async def my_inventory_full(current_user: dict = Depends(get_current_user)):
     return await full_inventory_analysis(steamid)
 
 
+@app.get("/cors-test")
+async def cors_test(response: Response):
+    """Endpoint simples para testar cabeçalhos CORS"""
+    # Adicionar cabeçalhos CORS manualmente
+    response.headers["Access-Control-Allow-Origin"] = "https://elite-skins-2025.github.io"
+    response.headers["Access-Control-Allow-Credentials"] = "true"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "*"
+    
+    return {
+        "cors_status": "OK",
+        "message": "Se você conseguir ver esta mensagem, os cabeçalhos CORS estão funcionando corretamente",
+        "timestamp": str(datetime.datetime.now()),
+        "origin": "https://elite-skins-2025.github.io"
+    }
+
+
 if __name__ == "__main__":
     # Aumentar número de workers e timeout para lidar melhor com requisições longas
     # Como o processamento de inventários grandes pode demorar
@@ -606,12 +683,19 @@ if __name__ == "__main__":
     # Obter a porta do ambiente (para compatibilidade com Render e outros serviços de hospedagem)
     port = int(os.environ.get("PORT", 8000))
     
+    print("Starting server with CORS configuration enabled:")
+    print(f"- Allowed origins: {origins}")
+    print("- CORS middleware and options handler configured")
+    print("- Custom CORS headers middleware added")
+    
+    # Aumentar os timeouts para lidar melhor com requisições CORS preflight
     uvicorn.run(
         "main:app", 
         host="0.0.0.0", 
         port=port, 
         reload=True,
         workers=4,  # Mais workers para processar requisições em paralelo
-        timeout_keep_alive=120,  # Manter conexões vivas por mais tempo
-        timeout_graceful_shutdown=30  # Dar mais tempo para shutdown
+        timeout_keep_alive=120,  # Manter conexões vivas por mais tempo (2 minutos)
+        timeout_graceful_shutdown=30,  # Dar mais tempo para shutdown
+        log_level="info"  # Aumentar log para debug de CORS
     )
