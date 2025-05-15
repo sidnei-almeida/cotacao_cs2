@@ -1,6 +1,6 @@
 from fastapi import FastAPI, HTTPException, Query, Request, Depends, Response, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, JSONResponse
 from fastapi.security import OAuth2PasswordBearer
 from starlette.middleware.base import BaseHTTPMiddleware
 from typing import List, Dict, Any, Optional
@@ -26,6 +26,13 @@ from auth.steam_auth import steam_login_url, validate_steam_login, create_jwt_to
 # Importe para o inicializador de banco de dados
 from migrate_railway import init_database
 
+# Middleware para health check com alta prioridade
+class HealthCheckMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        if request.url.path == "/health":
+            return JSONResponse(content={"status": "ok"})
+        return await call_next(request)
+
 # Configuração de autenticação OAuth2
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token", auto_error=False)
 
@@ -34,6 +41,9 @@ app = FastAPI(
     description="API para avaliação de inventários, distinguindo entre Unidades de Armazenamento e itens do mercado",
     version="0.4.0"  # Atualizada para versão com organização por origem dos itens
 )
+
+# Adicionar middleware de health check ANTES de qualquer outro middleware
+app.add_middleware(HealthCheckMiddleware)
 
 # Configurar CORS
 ALLOWED_ORIGINS = [
@@ -1001,12 +1011,8 @@ async def health():
 async def delayed_startup():
     """
     Executa tarefas de inicialização adicionais após o servidor já estar em execução.
-    Isso ajuda a garantir que o health check passe antes dessas tarefas.
     """
     try:
-        # Esperar alguns segundos para garantir que o servidor já está respondendo
-        await asyncio.sleep(5)
-        
         print("=== EXECUTANDO INICIALIZAÇÃO ADIADA ===")
         
         # Limpar preços antigos ou incorretos
@@ -1016,7 +1022,7 @@ async def delayed_startup():
         except Exception as clean_error:
             print(f"AVISO: Não foi possível limpar preços antigos: {clean_error}")
         
-        # Configurar a atualização semanal dos preços (Segunda-feira às 3:00)
+        # Configurar a atualização semanal dos preços
         try:
             print("Configurando atualizações programadas...")
             schedule_weekly_update(day_of_week=0, hour=3, minute=0)
@@ -1036,33 +1042,48 @@ async def delayed_startup():
 @app.on_event("startup")
 async def startup_event():
     """
-    Inicializa recursos na inicialização da aplicação.
+    Inicialização mínima do aplicativo para garantir que ele inicie rapidamente.
+    Todas as outras tarefas são adiadas.
     """
     print("=== INICIANDO API ELITE SKINS CS2 ===")
-    print(f"Ambiente: {os.environ.get('RAILWAY_ENVIRONMENT_NAME', 'desenvolvimento')}")
     print(f"Porta: {os.environ.get('PORT', 'não definida')}")
+    print(f"Ambiente: {os.environ.get('RAILWAY_ENVIRONMENT_NAME', 'desenvolvimento')}")
     
+    # Iniciar as tarefas adicionais em background depois de um tempo
+    # para permitir que o servidor já esteja respondendo ao health check
+    asyncio.create_task(delayed_startup_after_delay(20))  # Esperar 20 segundos
+    
+    print("=== SERVIDOR INICIADO E PRONTO PARA RECEBER REQUISIÇÕES ===")
+
+# Função para iniciar o banco de dados e outras tarefas após um atraso
+async def delayed_startup_after_delay(delay_seconds: int = 20):
+    """
+    Aguarda um tempo específico e então inicia as tarefas necessárias.
+    Isso permite que o servidor já esteja respondendo ao health check.
+    """
     try:
-        # Inicializar o banco de dados com tratamento de exceção
-        print("Inicializando banco de dados...")
+        # Aguardar para garantir que o health check já teve tempo de passar
+        print(f"Aguardando {delay_seconds} segundos antes de iniciar tarefas adicionais...")
+        await asyncio.sleep(delay_seconds)
+        
+        print("=== INICIANDO TAREFAS ADICIONAIS ===")
+        
+        # Inicializar o banco de dados
         try:
+            print("Inicializando banco de dados...")
             init_db()
             print("Banco de dados inicializado com sucesso!")
         except Exception as db_error:
             print(f"AVISO: Problema ao inicializar banco de dados: {db_error}")
             print("A API continuará funcionando com banco de dados em memória.")
         
-        # Iniciar as tarefas adicionais em background
+        # Iniciar as outras tarefas de inicialização adiada
         asyncio.create_task(delayed_startup())
         
-        print("=== SERVIDOR INICIADO E PRONTO PARA RECEBER REQUISIÇÕES ===")
     except Exception as e:
-        print(f"ERRO NA INICIALIZAÇÃO: {e}")
+        print(f"ERRO AO INICIAR TAREFAS ADICIONAIS: {e}")
         import traceback
         traceback.print_exc()
-        print("=== ATENÇÃO: API INICIADA COM ERROS, MAS AINDA FUNCIONAL ===")
-        print("A API continuará funcionando com funcionalidades limitadas.")
-
 
 if __name__ == "__main__":
     # Aumentar número de workers e timeout para lidar melhor com requisições longas
