@@ -7,31 +7,90 @@ e expõe a aplicação FastAPI de forma adequada para o Gunicorn.
 import os
 import sys
 import traceback
+import importlib.util
+
+# Configuração de diagnóstico
+VERBOSE_DEBUG = True
+
+def debug_print(message):
+    if VERBOSE_DEBUG:
+        print(f"[DEBUG] {message}")
 
 # Garantir que estamos no diretório correto
 current_dir = os.path.dirname(os.path.abspath(__file__))
+debug_print(f"Diretório atual: {current_dir}")
 os.chdir(current_dir)
 
 # Adicionar diretório atual ao path
 if current_dir not in sys.path:
     sys.path.insert(0, current_dir)
+    debug_print(f"Adicionado ao sys.path: {current_dir}")
+
+debug_print(f"sys.path completo: {sys.path}")
+debug_print(f"Conteúdo do diretório: {os.listdir(current_dir)}")
+
+# Método alternativo para importar o main.py diretamente
+def import_main_directly():
+    try:
+        debug_print("Tentando importar main.py usando importlib.util...")
+        main_path = os.path.join(current_dir, "main.py")
+        if not os.path.exists(main_path):
+            debug_print(f"ERRO: Arquivo main.py não encontrado em {main_path}")
+            return None
+            
+        spec = importlib.util.spec_from_file_location("main", main_path)
+        main_module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(main_module)
+        
+        if hasattr(main_module, "app"):
+            debug_print("Aplicação importada com sucesso via importlib!")
+            return main_module.app
+        else:
+            debug_print("Módulo main.py importado, mas não contém 'app'")
+            return None
+    except Exception as e:
+        debug_print(f"Erro ao importar main.py diretamente: {str(e)}")
+        debug_print(traceback.format_exc())
+        return None
 
 # Importações explícitas para garantir que todos os módulos sejam carregados
 try:
-    # Importar utilitários e serviços
-    from utils.config import get_api_config
-    from utils.database import init_db, get_stats
-    from services.steam_inventory import get_inventory_value, analyze_inventory
-    from services.case_evaluator import get_case_details, list_cases
-    from services.steam_market import get_item_price, get_api_status
-    from auth.steam_auth import steam_login_url, validate_steam_login, create_jwt_token, verify_jwt_token
+    debug_print("Iniciando importações...")
     
-    # Finalmente, importar a aplicação FastAPI principal
-    from main import app
+    # Tentar importar dependências críticas primeiro para verificar
+    try:
+        debug_print("Verificando imports de utils...")
+        import utils
+        debug_print("utils importado")
+        
+        debug_print("Verificando imports de services...")
+        import services
+        debug_print("services importado")
+        
+        debug_print("Verificando imports de auth...")
+        import auth
+        debug_print("auth importado")
+    except ImportError as e:
+        debug_print(f"ERRO ao importar pacotes básicos: {str(e)}")
+    
+    # Tentar importar a aplicação FastAPI principal primeiro
+    debug_print("Tentando importar app do main diretamente...")
+    try:
+        from main import app
+        debug_print("Importação direta de main.py bem-sucedida!")
+    except ImportError as e:
+        debug_print(f"Falha na importação direta: {str(e)}")
+        debug_print("Tentando método alternativo...")
+        app = import_main_directly()
+        
+        if app is None:
+            debug_print("Todos os métodos de importação falharam!")
+            raise ImportError("Não foi possível importar a aplicação principal por nenhum método")
     
     # Verificar os endpoints disponíveis
     routes = [{"path": route.path, "name": route.name} for route in app.routes]
-    print(f"Aplicação carregada com sucesso! {len(routes)} endpoints disponíveis.")
+    debug_print(f"Aplicação carregada com sucesso! {len(routes)} endpoints disponíveis.")
+    debug_print(f"Endpoints: {routes}")
     
     # Expor a aplicação para o Gunicorn
     application = app
@@ -41,8 +100,8 @@ except Exception as e:
     from fastapi import FastAPI
     from fastapi.middleware.cors import CORSMiddleware
     
-    print(f"ERRO AO INICIALIZAR APLICAÇÃO PRINCIPAL: {str(e)}")
-    print(f"Traceback completo: {traceback.format_exc()}")
+    debug_print(f"ERRO AO INICIALIZAR APLICAÇÃO PRINCIPAL: {str(e)}")
+    debug_print(f"Traceback completo: {traceback.format_exc()}")
     
     application = FastAPI(
         title="CS2 API (MODO DE ERRO)",
@@ -76,17 +135,26 @@ except Exception as e:
     
     @application.get("/error-details")
     async def error_details():
-        return {
+        error_details = {
             "error": str(e),
             "traceback": traceback.format_exc(),
             "cwd": os.getcwd(),
             "files": os.listdir("."),
             "python_path": sys.path,
-            "environment": dict(os.environ)
+            "environment": {k: v for k, v in os.environ.items() if k.lower() != "password" and k.lower() != "secret"}
         }
+        
+        # Verificar a estrutura de pastas críticas
+        for directory in ["utils", "services", "auth"]:
+            if os.path.exists(directory):
+                error_details[f"{directory}_files"] = os.listdir(directory)
+            else:
+                error_details[f"{directory}_exists"] = False
+        
+        return error_details
 
 # Verificação final
 if not hasattr(application, "routes"):
-    print("ERRO: A aplicação não possui rotas definidas!")
+    debug_print("ERRO: A aplicação não possui rotas definidas!")
 else:
-    print(f"Aplicação pronta para deploy com {len(application.routes)} endpoints.") 
+    debug_print(f"Aplicação pronta para deploy com {len(application.routes)} endpoints.") 
