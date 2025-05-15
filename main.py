@@ -19,6 +19,9 @@ from utils.database import init_db, get_stats, get_db_connection
 from utils.price_updater import run_scheduler, force_update_now, get_scheduler_status, schedule_weekly_update
 from auth.steam_auth import steam_login_url, validate_steam_login, create_jwt_token, verify_jwt_token, SECRET_KEY, ALGORITHM
 
+# Importe para o inicializador de banco de dados
+from migrate_railway import init_database
+
 # Configuração de autenticação OAuth2
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token", auto_error=False)
 
@@ -368,9 +371,16 @@ async def api_status(response: Response, request: Request = None):
             conn = get_db_connection()
             conn.close()
             db_status = "online"
+            
+            # Obter estatísticas básicas do banco de dados
+            db_stats = get_stats()
+            database_type = db_stats.get("database_type", "Unknown")
+            database_mode = db_stats.get("mode", "Unknown")
         except Exception as e:
             print(f"Aviso: Banco de dados não está acessível: {e}")
             db_status = "offline"
+            database_type = "Memory"
+            database_mode = "FALLBACK"
         
         return {
             "status": "online",
@@ -378,7 +388,11 @@ async def api_status(response: Response, request: Request = None):
             "timestamp": datetime.datetime.now().isoformat(),
             "environment": os.environ.get("RAILWAY_ENVIRONMENT_NAME", "development"),
             "components": {
-                "database": db_status
+                "database": {
+                    "status": db_status,
+                    "type": database_type,
+                    "mode": database_mode
+                }
             }
         }
     except Exception as e:
@@ -804,6 +818,40 @@ async def force_db_update(current_user: dict = Depends(get_current_user), max_it
         "message": f"Atualização forçada concluída. {stats['updated_skins']} itens atualizados.",
         "stats": stats
     }
+
+# Rota para inicializar o banco de dados (protegida por chave de admin)
+@app.get("/api/db/init")
+async def initialize_database(admin_key: str = Query(None), response: Response = None):
+    """Inicializa o banco de dados PostgreSQL. Requer chave de administrador."""
+    if response:
+        apply_cors_headers(response)
+    
+    # Verificar se a chave de admin está correta (hardcoded para simplicidade)
+    if admin_key != "elite-skins-admin-2023":
+        raise HTTPException(status_code=403, detail="Acesso não autorizado")
+    
+    # Executar a inicialização do banco de dados
+    try:
+        result = init_database()
+        if result["success"]:
+            return {
+                "status": "success",
+                "message": "Banco de dados inicializado com sucesso",
+                "details": result
+            }
+        else:
+            return {
+                "status": "error",
+                "message": f"Erro ao inicializar banco de dados: {result.get('error')}",
+                "details": result
+            }
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return {
+            "status": "error",
+            "message": f"Erro inesperado: {str(e)}"
+        }
 
 # Inicialização da aplicação
 @app.on_event("startup")
