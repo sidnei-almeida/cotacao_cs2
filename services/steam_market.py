@@ -144,10 +144,44 @@ def extract_price_from_text(price_text: str, currency_code: int = STEAM_MARKET_C
         price = float(cleaned_text)
         
         # CORREÇÃO: Verificação adicional para valores absurdos
-        # Se o valor for extremamente alto, provavelmente é um erro
-        if price > 10000:  # Valor extremamente alto para itens comuns
-            print(f"AVISO: Valor extremamente alto detectado: {price} de '{price_text}'. Ajustando para valor razoável.")
-            return 50.0  # Valor default mais razoável para itens caros comuns
+        # Se o valor for extremamente alto para o tipo de item, provavelmente é um erro
+        
+        # Definir limites máximos razoáveis para diferentes tipos de itens
+        max_limits = {
+            "Soldier": 30.0,           # Agentes/Personagens comuns
+            "Mr. Muhlik": 30.0,        # Agentes/Personagens comuns  
+            "Phoenix": 30.0,           # Agentes/Personagens comuns
+            "SAIDAN": 30.0,            # Agentes/Personagens comuns
+            "Sticker": 50.0,           # Maioria dos adesivos comuns
+            "Adesivo": 50.0,           # Maioria dos adesivos comuns
+            "Pistol": 100.0,           # Pistolas comuns
+            "Case": 20.0,              # Caixas comuns
+            "Graffiti": 5.0,           # Grafites comuns
+            "Spray": 5.0,              # Grafites comuns
+            "Dragon Lore": 15000.0,    # AWP Dragon Lore (cara)
+            "Howl": 8000.0,            # M4A4 Howl (cara)
+            "Gungnir": 12000.0,        # AWP Gungnir (cara)
+            "Butterfly": 3500.0,       # Facas Butterfly (caras)
+            "Karambit": 3500.0,        # Facas Karambit (caras)
+            "Gloves": 2500.0           # Luvas (caras)
+        }
+        
+        # Verificar se o preço excede o limite para o tipo de item
+        for item_type, max_limit in max_limits.items():
+            if item_type in price_text and price > max_limit:
+                print(f"AVISO: Valor extremamente alto detectado: {price} de '{price_text}' para item tipo {item_type}. Ajustando para máximo razoável: {max_limit}")
+                return max_limit
+                
+        # Verificação geral para itens não identificados
+        # Itens muito caros: facas, luvas, skins raras
+        if "★" in price_text and price > 5000.0:
+            print(f"AVISO: Valor alto para item especial: {price} de '{price_text}'. Permitido por ter símbolo ★")
+            return price
+            
+        # Para itens comuns não identificados com preços absurdos
+        if price > 350.0 and not any(special in price_text for special in ["★", "Covert", "Red", "Knife", "Glove", "Dragon", "Howl", "Fire Serpent"]):
+            print(f"AVISO: Valor possivelmente incorreto: {price} de '{price_text}'. Ajustando para valor razoável: 50.0")
+            return 50.0
             
         return price
     except (ValueError, AttributeError):
@@ -190,65 +224,78 @@ def get_item_price_via_scraping(market_hash_name: str, appid: int = STEAM_APPID,
         response = requests.get(url, headers=headers, timeout=30)  # Aumento do timeout para 30s
         
         if response.status_code == 200:
-            # Salvar o HTML para debugging (só em ambiente de dev)
-            # with open(f"debug_{encoded_name}.html", "w", encoding="utf-8") as f:
-            #    f.write(response.text)
-            
             # Processar HTML com selectolax
             parser = HTMLParser(response.text)
             
-            # Primeiro tenta encontrar o preço de venda mais baixo
+            # NOVA ABORDAGEM: Buscar o preço mais baixo primeiro
+            lowest_price = None
+            
+            # 1. Buscar no elemento específico que mostra o preço mais baixo
             price_element = parser.css_first("span.market_listing_price_with_fee")
-            
             if price_element:
-                price_text = price_element.text()
-                price = extract_price_from_text(price_text, currency)
-                
-                if price:
-                    print(f"Preço via scraping para {market_hash_name}: {price}")
-                    return price
+                price_text = price_element.text().strip()
+                # Verificar se contém o formato de preço correto (símbolo de moeda)
+                if any(symbol in price_text for symbol in ['R$', '$', '€', '¥', '£', 'kr', 'zł', '₽']):
+                    lowest_price = extract_price_from_text(price_text, currency)
+                    if lowest_price:
+                        print(f"Preço mais baixo para {market_hash_name}: {lowest_price} ({price_text})")
             
-            # Se não encontrar o elemento esperado, tentar alternativas...
-            # 1. Tentar encontrar dados de preço no JavaScript da página
-            script_tags = parser.css("script")
-            for script in script_tags:
-                script_text = script.text()
-                
-                # Procurar padrões diferentes de preço no JavaScript
-                price_patterns = [
-                    r'Market_LoadOrderSpread\(\s*\d+\s*\);\s*var\s+g_rgAssets.*?"lowest_price":\s*"([^"]+)"',
-                    r'"lowest_price":"([^"]+)"',
-                    r'"median_price":"([^"]+)"',
-                    r'market_listing_price_with_fee">([^<]+)<',
-                    r'market_listing_price_without_fee">([^<]+)<'
-                ]
-                
-                for pattern in price_patterns:
-                    price_match = re.search(pattern, script_text, re.DOTALL)
-                    if price_match:
-                        price_text = price_match.group(1)
-                        price = extract_price_from_text(price_text, currency)
-                        
-                        if price:
-                            print(f"Preço encontrado via JavaScript para {market_hash_name}: {price}")
-                            return price
+            # 2. Se não encontrar, procurar no histograma de vendas recentes
+            if not lowest_price:
+                histogram_element = parser.css_first("div.market_listing_price_listings_block")
+                if histogram_element:
+                    price_spans = histogram_element.css("span.market_listing_price")
+                    for span in price_spans:
+                        price_text = span.text().strip()
+                        # IMPORTANTE: Verificar se é um preço real (contém símbolo de moeda)
+                        # e NÃO é um contador de quantidade (evitar confusão entre preço e quantidade)
+                        if any(symbol in price_text for symbol in ['R$', '$', '€', '¥', '£', 'kr', 'zł', '₽']):
+                            price = extract_price_from_text(price_text, currency)
+                            if price and (lowest_price is None or price < lowest_price):
+                                lowest_price = price
             
-            # 2. Tentar qualquer texto que pareça um preço na página
-            price_candidates = []
+            # 3. Se ainda não encontrar, procurar nos dados de JavaScript da página
+            if not lowest_price:
+                script_tags = parser.css("script")
+                for script in script_tags:
+                    script_text = script.text()
+                    
+                    # Procurar padrões diferentes de preço no JavaScript
+                    price_patterns = [
+                        r'"lowest_price":"([^"]+)"',
+                        r'"median_price":"([^"]+)"',
+                        r'"sale_price_text":"([^"]+)"'
+                    ]
+                    
+                    for pattern in price_patterns:
+                        price_match = re.search(pattern, script_text)
+                        if price_match:
+                            price_text = price_match.group(1)
+                            # Verificar se é um preço real (contém símbolo de moeda)
+                            if any(symbol in price_text for symbol in ['R$', '$', '€', '¥', '£', 'kr', 'zł', '₽']):
+                                price = extract_price_from_text(price_text, currency)
+                                if price and (lowest_price is None or price < lowest_price):
+                                    lowest_price = price
+                                    print(f"Preço encontrado via JavaScript: {lowest_price} ({price_text})")
             
-            for element in parser.css("span"):
-                if element.text() and re.search(r'\d+[.,]\d+', element.text()):
-                    price_candidate = extract_price_from_text(element.text(), currency)
-                    if price_candidate and price_candidate > 0:
-                        price_candidates.append(price_candidate)
+            # 4. IMPORTANTE: Filtrar elementos que são quantidades, não preços!
+            if lowest_price:
+                # Verificar se o valor parece uma quantidade, não um preço:
+                # - Números inteiros maiores que 100 sem centavos
+                # - Números muito redondos (como 100, 200, etc.)
+                if (lowest_price > 100 and lowest_price.is_integer() and
+                    lowest_price % 50 == 0):  # Múltiplos de 50 redondos
+                    print(f"AVISO: Valor {lowest_price} parece ser uma QUANTIDADE, não um PREÇO. Ignorando.")
+                    lowest_price = None
             
-            # Se encontrou candidatos, usar o menor valor (mais conservador)
-            if price_candidates:
-                min_price = min(price_candidates)
-                print(f"Preço candidato para {market_hash_name}: {min_price}")
-                return min_price
+            # Se conseguimos extrair um preço válido, retorná-lo
+            if lowest_price:
+                return lowest_price
             
-            print(f"Não foi possível encontrar o preço para {market_hash_name} via scraping")
+            print(f"Não foi possível encontrar um preço válido para {market_hash_name}")
+            # Salvar o HTML para análise em caso de problemas (ambiente de dev)
+            # with open(f"debug_{encoded_name}.html", "w", encoding="utf-8") as f:
+            #    f.write(response.text)
         else:
             print(f"Erro ao acessar página do mercado: Status {response.status_code}")
     
@@ -273,16 +320,35 @@ def get_item_price_via_scraping(market_hash_name: str, appid: int = STEAM_APPID,
         
         if response.status_code == 200:
             parser = HTMLParser(response.text)
-            price_containers = parser.css("span.normal_price")
             
-            if price_containers:
-                for container in price_containers:
-                    price_text = container.text()
-                    if price_text and re.search(r'\d', price_text):
-                        price = extract_price_from_text(price_text, currency)
-                        if price and price > 0:
-                            print(f"Preço encontrado na segunda tentativa: {price}")
-                            return price
+            # Buscar por preços em elementos principais
+            lowest_price = None
+            price_candidates = []
+            
+            # Verificar diferentes formatos de exibição de preço
+            price_containers = parser.css("span.normal_price, span.market_listing_price_with_fee")
+            
+            for container in price_containers:
+                price_text = container.text().strip()
+                # IMPORTANTE: Verificar se é de fato um preço (contém símbolo de moeda)
+                if any(symbol in price_text for symbol in ['R$', '$', '€', '¥', '£', 'kr', 'zł', '₽']):
+                    price = extract_price_from_text(price_text, currency)
+                    if price:
+                        price_candidates.append((price, price_text))
+            
+            # Se encontrou candidatos, usar o mais baixo que parece ser um preço real
+            if price_candidates:
+                # Ordenar por preço (menor primeiro)
+                price_candidates.sort(key=lambda x: x[0])
+                
+                # Filtrar candidatos que parecem ser quantidades
+                valid_prices = [(price, text) for price, text in price_candidates 
+                                if not (price > 100 and price.is_integer() and price % 50 == 0)]
+                
+                if valid_prices:
+                    lowest_price, price_text = valid_prices[0]
+                    print(f"Preço mais baixo (segunda tentativa): {lowest_price} ({price_text})")
+                    return lowest_price
         
     except Exception as e:
         print(f"Segunda tentativa falhou: {e}")
@@ -324,76 +390,61 @@ def get_item_price(market_hash_name: str, currency: int = None, appid: int = Non
         price_cache[cache_key] = db_price
         return db_price
     
+    # Classificar o item em categorias para determinar limites de preço razoáveis
+    item_category, price_limit = classify_item_and_get_price_limit(market_hash_name)
+    print(f"Item {market_hash_name} classificado como: {item_category} (Limite: R$ {price_limit:.2f})")
+    
     # Iniciar com base no nome do item
     price = 0.0
     
-    # CORREÇÃO: Tratamento especial para itens problemáticos
-    if "Soldier | Phoenix" in market_hash_name:
-        price = 21.0
-        print(f"CORREÇÃO: Usando preço fixo para {market_hash_name}: R$ {price}")
-        price_cache[cache_key] = price
-        save_skin_price(market_hash_name, price, currency, appid)  # Salvar no banco
-        return price
+    # CORREÇÃO: Tratamento especial para itens problemáticos conhecidos
+    known_problematic_items = {
+        "Soldier | Phoenix": 21.0,
+        "SWAT | Operator": 20.0,
+        "The Elite Mr. Muhlik": 30.0,
+        "The Doctor": 25.0,
+        "SAIDAN | Cypher": 22.0,
+        "Cmdr. Frank | Wet Sox": 20.0,
+        "1st Lieutenant Farlow": 22.0
+    }
     
-    # Primeiro verificar se é um adesivo (sticker) ou item comum e usar valor mock
-    if "Sticker" in market_hash_name or "Adesivo" in market_hash_name:
-        # Para adesivos, usar um valor padrão para evitar requisições excessivas
-        if "Copenhagen 2024" in market_hash_name:
-            price = 1.5
-        elif "Rio 2022" in market_hash_name:
-            price = 2.5
-        elif "Glitter" in market_hash_name:
-            price = 5.0
-        else:
-            price = 3.0
-            
-        print(f"Usando preço estimado para adesivo: {market_hash_name}: {price}")
-        price_cache[cache_key] = price
-        save_skin_price(market_hash_name, price, currency, appid)  # Salvar no banco
-        return price
+    # Verificar se é um item problemático conhecido
+    for item_name, fixed_price in known_problematic_items.items():
+        if item_name in market_hash_name:
+            print(f"CORREÇÃO: Usando preço fixo para {market_hash_name}: R$ {fixed_price}")
+            price_cache[cache_key] = fixed_price
+            save_skin_price(market_hash_name, fixed_price, currency, appid)  # Salvar no banco
+            return fixed_price
     
     # Verificar preços mockados antes do scraping
     for mock_name, mock_price in mock_prices.items():
         if mock_name.lower() in market_hash_name.lower():
-            price = mock_price
-            print(f"Usando preço mockado para {market_hash_name}: {price}")
+            # Aplicar o limite de preço baseado na categoria
+            capped_price = min(mock_price, price_limit)
+            if capped_price < mock_price:
+                print(f"CORREÇÃO: Limitando preço mockado para {market_hash_name}: de R$ {mock_price} para R$ {capped_price}")
+            else:
+                print(f"Usando preço mockado para {market_hash_name}: R$ {capped_price}")
             
-            # Ainda assim, registrar este preço no histórico para análise futura
-            processed_price = process_scraped_price(market_hash_name, price)
-            price_cache[cache_key] = processed_price
-            save_skin_price(market_hash_name, processed_price, currency, appid)  # Salvar no banco
-            return processed_price
-            
+            # Registrar este preço no histórico para análise futura
+            price_cache[cache_key] = capped_price
+            save_skin_price(market_hash_name, capped_price, currency, appid)  # Salvar no banco
+            return capped_price
+    
     # Se o item não tem preço mockado específico, tentar estimar com base em características
-    if "StatTrak™" in market_hash_name:
-        price += mock_prices.get("StatTrak™", 0.0)
-        print(f"Estimando preço StatTrak para {market_hash_name}: {price}")
+    estimated_price = estimate_price_from_characteristics(market_hash_name)
+    if estimated_price > 0:
+        # Aplicar o limite de preço baseado na categoria
+        capped_price = min(estimated_price, price_limit)
+        if capped_price < estimated_price:
+            print(f"CORREÇÃO: Limitando preço estimado para {market_hash_name}: de R$ {estimated_price} para R$ {capped_price}")
+        else:
+            print(f"Usando preço estimado para {market_hash_name}: R$ {capped_price}")
         
         # Registrar preço estimado no histórico para análise
-        processed_price = process_scraped_price(market_hash_name, price)
-        price_cache[cache_key] = processed_price
-        save_skin_price(market_hash_name, processed_price, currency, appid)  # Salvar no banco
-        return processed_price
-    
-    for quality, name in QUALITY_NAMES.items():
-        if name in market_hash_name or f"({quality})" in market_hash_name:
-            # Aplicar um fator ao preço base estimado com base na qualidade
-            quality_factor = {
-                "FN": 1.5,    # Factory New - mais caro
-                "MW": 1.2,    # Minimal Wear
-                "FT": 1.0,    # Field-Tested - preço base
-                "WW": 0.8,    # Well-Worn
-                "BS": 0.6     # Battle-Scarred - mais barato
-            }.get(quality, 1.0)
-            
-            price = max(price, 5.0 * quality_factor)  # Preço mínimo fallback
-            print(f"Estimando preço por qualidade para {market_hash_name}: {price}")
-            
-            # Registrar preço estimado no histórico para análise
-            processed_price = process_scraped_price(market_hash_name, price)
-            price_cache[cache_key] = processed_price
-            save_skin_price(market_hash_name, processed_price, currency, appid)  # Salvar no banco
-            return processed_price
+        price_cache[cache_key] = capped_price
+        save_skin_price(market_hash_name, capped_price, currency, appid)  # Salvar no banco
+        return capped_price
     
     # Apenas se não conseguiu encontrar preço de outra forma, tentar scraping
     try:
@@ -403,13 +454,18 @@ def get_item_price(market_hash_name: str, currency: int = None, appid: int = Non
         # Registrar que o scraping foi feito para este item
         update_last_scrape_time(market_hash_name, currency, appid)
         
-        # Processar o preço obtido usando o novo sistema que inclui histórico,
-        # IQR, pesos temporais e correções
+        # Processar o preço obtido usando o sistema que inclui histórico e correções
         price = process_scraped_price(market_hash_name, raw_price)
+        
+        # Aplicar o limite de preço baseado na categoria
+        capped_price = min(price, price_limit)
+        if capped_price < price and price > 0:
+            print(f"CORREÇÃO: Limitando preço de scraping para {market_hash_name}: de R$ {price} para R$ {capped_price}")
+            price = capped_price
         
         # Se o scraping retornou um valor válido, usar e armazenar no cache
         if price > 0:
-            print(f"Preço processado para {market_hash_name}: {price}")
+            print(f"Preço processado para {market_hash_name}: R$ {price}")
             price_cache[cache_key] = price
             save_skin_price(market_hash_name, price, currency, appid)  # Salvar no banco
             return price
@@ -425,6 +481,164 @@ def get_item_price(market_hash_name: str, currency: int = None, appid: int = Non
     price_cache[cache_key] = price
     save_skin_price(market_hash_name, price, currency, appid)  # Salvar no banco
     return price
+
+
+def classify_item_and_get_price_limit(market_hash_name: str) -> tuple:
+    """
+    Classifica um item com base em seu nome e retorna uma categoria e um limite de preço razoável.
+    
+    Args:
+        market_hash_name: Nome do item no formato do mercado
+        
+    Returns:
+        Tupla (categoria, limite_de_preço)
+    """
+    market_hash_name_lower = market_hash_name.lower()
+    
+    # Mapeamento de tipos de itens para limites de preço razoáveis (em R$)
+    categories = [
+        # Categoria: Knives (Facas) - Itens mais caros
+        {
+            "category": "knife",
+            "keywords": ["★ ", "knife", "karambit", "bayonet", "butterfly", "flip knife", "gut knife", "huntsman", "falchion", "bowie", "daggers"],
+            "limit": 5000.0
+        },
+        # Categoria: Luvas
+        {
+            "category": "gloves",
+            "keywords": ["★ gloves", "★ hand", "sport gloves", "driver gloves", "specialist gloves", "bloodhound gloves"],
+            "limit": 4000.0
+        },
+        # Categoria: Skins raras/caras
+        {
+            "category": "rare_skins",
+            "keywords": ["dragon lore", "howl", "gungnir", "fire serpent", "fade", "asiimov", "doppler", "tiger tooth", "slaughter", "crimson web", "marble fade"],
+            "limit": 3000.0
+        },
+        # Categoria: StatTrak
+        {
+            "category": "stattrak",
+            "keywords": ["stattrak™"],
+            "limit": 1000.0
+        },
+        # Categoria: AWP (Sniper rifle popular)
+        {
+            "category": "awp",
+            "keywords": ["awp"],
+            "limit": 500.0
+        },
+        # Categoria: Rifles populares
+        {
+            "category": "popular_rifles",
+            "keywords": ["ak-47", "m4a4", "m4a1-s"],
+            "limit": 350.0
+        },
+        # Categoria: Outras armas
+        {
+            "category": "other_weapons",
+            "keywords": ["deagle", "desert eagle", "usp-s", "glock", "p250", "p90", "mp5", "mp7", "mp9", "mac-10", "mag-7", "nova", "sawed-off", "xm1014", "galil", "famas", "sg 553", "aug", "ssg 08", "g3sg1", "scar-20", "m249", "negev"],
+            "limit": 150.0
+        },
+        # Categoria: Cases (Caixas)
+        {
+            "category": "cases",
+            "keywords": ["case", "caixa"],
+            "limit": 30.0
+        },
+        # Categoria: Stickers (Adesivos)
+        {
+            "category": "stickers",
+            "keywords": ["sticker", "adesivo"],
+            "limit": 50.0
+        },
+        # Categoria: Agents (Agentes)
+        {
+            "category": "agents",
+            "keywords": ["agent", "agente", "soldier", "operator", "muhlik", "cmdr", "doctor", "lieutenant", "saidan", "chef", "cypher", "enforcer", "crasswater", "farlow", "voltzmann", "street soldier"],
+            "limit": 30.0
+        },
+        # Categoria: Outros itens
+        {
+            "category": "other_items",
+            "keywords": ["pin", "patch", "graffiti", "spray", "music kit", "pass"],
+            "limit": 20.0
+        }
+    ]
+    
+    # Verificar cada categoria
+    for category in categories:
+        for keyword in category["keywords"]:
+            if keyword in market_hash_name_lower:
+                return category["category"], category["limit"]
+    
+    # Padrão: categoria desconhecida com limite conservador
+    return "unknown", 50.0
+
+
+def estimate_price_from_characteristics(market_hash_name: str) -> float:
+    """
+    Estima um preço para um item com base em suas características (nome, qualidade, etc.)
+    
+    Args:
+        market_hash_name: Nome do item no formato do mercado
+        
+    Returns:
+        Preço estimado
+    """
+    price = 0.0
+    market_hash_name_lower = market_hash_name.lower()
+    
+    # Facas e luvas (itens especiais)
+    if "★" in market_hash_name:
+        if "gloves" in market_hash_name_lower or "hand wraps" in market_hash_name_lower:
+            price = 800.0
+        else:  # Facas
+            price = 550.0
+    
+    # StatTrak
+    if "stattrak™" in market_hash_name_lower:
+        price += 50.0
+    
+    # AWP (Sniper rifle popular)
+    if "awp" in market_hash_name_lower:
+        price = max(price, 30.0)
+    
+    # Rifles populares
+    if any(rifle in market_hash_name_lower for rifle in ["ak-47", "m4a4", "m4a1-s"]):
+        price = max(price, 20.0)
+    
+    # Tipo de arma comum
+    if any(weapon in market_hash_name_lower for weapon in [
+        "deagle", "desert eagle", "usp-s", "glock", "p250", "p90", "mp5", "mp7", 
+        "mp9", "mac-10", "mag-7", "nova", "sawed-off", "xm1014", "galil", "famas", 
+        "sg 553", "aug", "ssg 08", "g3sg1", "scar-20", "m249", "negev"
+    ]):
+        price = max(price, 10.0)
+    
+    # Casos especiais para personagens/agentes
+    if any(agent in market_hash_name_lower for agent in [
+        "soldier", "operator", "muhlik", "cmdr", "doctor", "lieutenant", 
+        "saidan", "chef", "cypher", "enforcer", "crasswater", "farlow", "voltzmann"
+    ]):
+        price = max(price, 20.0)
+    
+    # Padrões de qualidade
+    for quality, name in QUALITY_NAMES.items():
+        if name.lower() in market_hash_name_lower or f"({quality.lower()})" in market_hash_name_lower:
+            # Aplicar um fator ao preço base estimado com base na qualidade
+            quality_factor = {
+                "FN": 1.5,    # Factory New - mais caro
+                "MW": 1.2,    # Minimal Wear
+                "FT": 1.0,    # Field-Tested - preço base
+                "WW": 0.8,    # Well-Worn
+                "BS": 0.6     # Battle-Scarred - mais barato
+            }.get(quality, 1.0)
+            
+            price *= quality_factor
+            break
+    
+    # Se nenhuma característica especial foi encontrada, usar um valor mínimo default
+    return max(price, 5.0)
 
 
 def get_steam_api_data(interface: str, method: str, version: str, params: dict) -> Optional[Dict]:

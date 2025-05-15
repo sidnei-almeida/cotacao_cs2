@@ -368,30 +368,88 @@ def process_scraped_price(market_hash_name: str, price: float) -> float:
     # Verificar se o preço é válido
     if price is None or price <= 0:
         return 0.0
-        
-    # Primeiro, verificar valores extremamente altos para evitar erros evidentes
-    # Como "The Elite Mr. Muhlik | Elite" avaliado incorretamente a 5000 reais
-    if "Mr. Muhlik" in market_hash_name and price > 1000:
-        print(f"Correção de valor extremo para {market_hash_name}: {price} -> 300.0")
-        price = 300.0  # Valor mais plausível
     
-    # Categorias de itens problemáticos conhecidos
+    # NOVA DETECÇÃO DE OUTLIER: Verificar se o preço está muito fora da faixa esperada
+    # Este é um filtro preliminar para preços absurdamente fora da realidade
+    
+    # Classificar o item em categorias para determinar os limites de preço razoável
+    item_category, price_range = classify_item_for_price_range(market_hash_name)
+    min_reasonable_price, max_reasonable_price = price_range
+    
+    # Se o preço estiver muito fora da faixa razoável (mais de 10x o limite superior),
+    # consideramos como um outlier extremo e não adicionamos ao histórico
+    if price > max_reasonable_price * 10:
+        print(f"OUTLIER EXTREMO: Preço absurdo para {market_hash_name}: {price:.2f} está muito acima do limite máximo esperado ({max_reasonable_price:.2f})")
+        
+        # Se tivermos histórico para este item, usar o histórico em vez do valor atual
+        existing_price = price_history_manager.get_clean_price(market_hash_name)
+        if existing_price is not None:
+            print(f"Usando preço histórico existente: {existing_price:.2f}")
+            return existing_price
+        
+        # Se não tivermos histórico, usar um valor médio da faixa de preço
+        fallback_price = (min_reasonable_price + max_reasonable_price) / 2
+        print(f"Sem histórico, usando preço médio estimado: {fallback_price:.2f}")
+        
+        # Ainda adicionamos ao histórico mas com um valor corrigido para referência futura
+        # Isso permite que o sistema aprenda com o tempo
+        price_history_manager.add_price(market_hash_name, fallback_price)
+        return fallback_price
+    
+    # Se não for outlier extremo, tratamento normal
+        
+    # Verificar valores altos para itens comuns
+    market_hash_name_lower = market_hash_name.lower()
+    
+    # Lista ampliada de itens problemáticos conhecidos com valores fixos
     known_problematic_items = {
-        "The Elite Mr. Muhlik": 300.0,
-        "The Doctor": 250.0,
-        "Dragon Lore": 15000.0,
-        "Howl": 8000.0,
-        "Fire Serpent": 4500.0,
-        "Gungnir": 10000.0
+        "The Elite Mr. Muhlik": 30.0,
+        "The Doctor": 25.0,
+        "Soldier | Phoenix": 21.0,
+        "SWAT | Operator": 20.0,
+        "SAIDAN | Cypher": 22.0,
+        "Cmdr. Frank | Wet Sox": 20.0,
+        "1st Lieutenant Farlow": 22.0,
+        "Street Soldier | Phoenix": 18.0,
+        "Vypa Sista of the Revolution": 25.0,
+        "Crasswater | Goodfella": 21.0
     }
     
     # Verificar se é um item problemático conhecido
     for item_name, correct_price in known_problematic_items.items():
-        if item_name in market_hash_name:
-            print(f"Usando valor corrigido para {market_hash_name}: {correct_price}")
-            price = correct_price
-            break
-            
+        if item_name.lower() in market_hash_name_lower:
+            print(f"Usando valor fixo corrigido para {market_hash_name}: {correct_price}")
+            # Adicionar ao histórico o valor correto
+            price_history_manager.add_price(market_hash_name, correct_price)
+            return correct_price
+    
+    # Lidar com preços suspeitos: valores extremamente altos para itens comuns
+    if "agent" in market_hash_name_lower or any(agent in market_hash_name_lower for agent in ["soldier", "operator", "muhlik", "cmdr", "doctor", "lieutenant", "saidan", "chef", "cypher", "enforcer", "crasswater", "farlow", "voltzmann"]):
+        if price > 100:  # Agentes não devem custar mais que 100 reais (valor super conservador)
+            print(f"Correção de valor extremo para agente {market_hash_name}: {price:.2f} -> 30.0")
+            # Adicionar ao histórico o valor corrigido
+            price_history_manager.add_price(market_hash_name, 30.0)
+            return 30.0
+    
+    # Para outros itens, aplicar um limite baseado na categoria,
+    # mas apenas para corrigir valores absurdamente altos
+    if price > max_reasonable_price:
+        capped_price = max_reasonable_price
+        print(f"Limitando preço acima do razoável para {market_hash_name}: {price:.2f} -> {capped_price:.2f}")
+        
+        # Adicionar ao histórico tanto o valor original quanto o limitado para análise
+        # O valor original ajuda o sistema a detectar tendências verdadeiras de aumento
+        price_history_manager.add_price(market_hash_name, price)
+        price_history_manager.add_price(market_hash_name, capped_price)
+        
+        # Aplicamos a filtragem estatística depois de adicionar os valores
+        clean_price = price_history_manager.get_clean_price(market_hash_name)
+        if clean_price is not None:
+            return clean_price
+        else:
+            return capped_price
+    
+    # Para valores dentro da faixa esperada, seguir com o processamento normal
     # Adicionar o preço ao histórico
     price_history_manager.add_price(market_hash_name, price)
     
@@ -401,9 +459,95 @@ def process_scraped_price(market_hash_name: str, price: float) -> float:
     # Se não temos dados históricos suficientes, usar o preço atual
     if clean_price is None:
         return price
-        
+    
+    # Limitar a diferença máxima entre o preço atual e o preço histórico
+    # para evitar mudanças drásticas mesmo após filtragem
+    if clean_price > price * 2:  # Se o preço filtrado for mais que 2x o preço atual
+        print(f"Limitando aumento desproporcional para {market_hash_name}: {price:.2f} -> {clean_price:.2f}")
+        return price * 2  # Limitar a 200% do preço atual
+    
+    if clean_price < price / 2:  # Se o preço filtrado for menos que 50% do preço atual
+        print(f"Limitando queda desproporcional para {market_hash_name}: {price:.2f} -> {clean_price:.2f}")
+        return price / 2  # Limitar a 50% do preço atual
+    
     # Mostrar informação de debug se o preço mudou significativamente
     if abs(clean_price - price) / price > 0.2:  # Diferença > 20%
         print(f"Correção de preço para {market_hash_name}: {price:.2f} -> {clean_price:.2f}")
-        
+    
     return clean_price
+
+
+def classify_item_for_price_range(market_hash_name: str) -> tuple:
+    """
+    Classifica um item e retorna uma faixa de preço razoável.
+    
+    Args:
+        market_hash_name: Nome do item no formato do mercado
+        
+    Returns:
+        Tupla (categoria, (min_price, max_price))
+    """
+    market_hash_name_lower = market_hash_name.lower()
+    
+    # Mapeamento de categorias de itens para faixas de preço (min, max) em reais
+    categories = [
+        # Categoria: Facas - Itens mais caros
+        {
+            "category": "knife",
+            "keywords": ["★ ", "knife", "karambit", "bayonet", "butterfly"],
+            "price_range": (300.0, 5000.0)
+        },
+        # Categoria: Luvas
+        {
+            "category": "gloves",
+            "keywords": ["★ gloves", "★ hand", "sport gloves", "driver gloves"],
+            "price_range": (300.0, 4000.0)
+        },
+        # Categoria: AWP (Sniper rifle popular)
+        {
+            "category": "awp",
+            "keywords": ["awp"],
+            "price_range": (10.0, 500.0)
+        },
+        # Categoria: Rifles populares
+        {
+            "category": "popular_rifles",
+            "keywords": ["ak-47", "m4a4", "m4a1-s"],
+            "price_range": (5.0, 350.0)
+        },
+        # Categoria: Outras armas
+        {
+            "category": "other_weapons",
+            "keywords": ["deagle", "desert eagle", "usp-s", "glock", "p250"],
+            "price_range": (2.0, 150.0)
+        },
+        # Categoria: Cases (Caixas)
+        {
+            "category": "cases",
+            "keywords": ["case", "caixa"],
+            "price_range": (0.5, 30.0)
+        },
+        # Categoria: Stickers (Adesivos)
+        {
+            "category": "stickers",
+            "keywords": ["sticker", "adesivo"],
+            "price_range": (0.5, 50.0)
+        },
+        # Categoria: Agents (Agentes) - Foco principal nos problemas
+        {
+            "category": "agents",
+            "keywords": ["agent", "agente", "soldier", "operator", "muhlik", 
+                         "cmdr", "doctor", "lieutenant", "saidan", "chef", 
+                         "cypher", "enforcer", "crasswater", "farlow", "voltzmann"],
+            "price_range": (10.0, 40.0)  # Faixa estreita para evitar valores absurdos
+        }
+    ]
+    
+    # Verificar cada categoria
+    for category in categories:
+        for keyword in category["keywords"]:
+            if keyword in market_hash_name_lower:
+                return category["category"], category["price_range"]
+    
+    # Padrão para itens desconhecidos
+    return "unknown", (1.0, 50.0)
