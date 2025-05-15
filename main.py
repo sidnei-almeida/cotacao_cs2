@@ -51,7 +51,7 @@ app.add_middleware(
     allow_origins=["*"],  # Permitir todas as origens temporariamente para desenvolvimento
     allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["*"],
+    allow_headers=["Content-Type", "Authorization", "X-Requested-With", "expires", "*"],
     expose_headers=["Content-Type", "Authorization"]
 )
 
@@ -65,7 +65,7 @@ class CORSMiddleware(BaseHTTPMiddleware):
         response.headers["Access-Control-Allow-Origin"] = "*"
         response.headers["Access-Control-Allow-Credentials"] = "true"
         response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
-        response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Requested-With"
+        response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Requested-With, expires"
         
         return response
 
@@ -327,7 +327,9 @@ async def cases(response: Response, request: Request = None):
                 
         return cases_list
     except Exception as e:
-        return {"error": str(e)}
+        print(f"Erro ao processar lista de caixas: {e}")
+        # Retornar uma lista vazia em vez de um objeto com erro
+        return []
 
 
 @app.get("/api/status")
