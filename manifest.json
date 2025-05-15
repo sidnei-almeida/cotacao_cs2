@@ -1,0 +1,23 @@
+{
+  "version": 2,
+  "memory": "512MB",
+  "cpu": 1,
+  "scale": {
+    "instance_count": 1,
+    "min_instance_count": 1,
+    "max_instance_count": 1
+  },
+  "features": {
+    "healthcheck": {
+      "status_checker": {
+        "enabled": true,
+        "path": "/railway-health",
+        "method": "GET",
+        "interval": 15,
+        "timeout": 5,
+        "initially_passing": false,
+        "grace_period": 60
+      }
+    }
+  }
+} 

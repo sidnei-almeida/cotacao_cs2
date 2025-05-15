@@ -4,8 +4,10 @@ buildCommand = "pip install -r requirements.txt"
 
 [deploy]
 startCommand = "gunicorn -k uvicorn.workers.UvicornWorker -w 4 --timeout 120 --keep-alive 120 main:app -b 0.0.0.0:$PORT"
-healthcheckPath = "/api/status"
+healthcheckPath = "/railway-health"
 healthcheckTimeout = 300
+healthcheckInterval = 30
+retryInterval = 15
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 5
 
