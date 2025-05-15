@@ -15,7 +15,7 @@ from services.steam_inventory import get_inventory_value, get_storage_unit_conte
 from services.case_evaluator import get_case_details, list_cases
 from services.steam_market import get_item_price, get_api_status
 from utils.config import get_api_config
-from utils.database import init_db, get_stats
+from utils.database import init_db, get_stats, get_db_connection
 from utils.price_updater import run_scheduler, force_update_now, get_scheduler_status, schedule_weekly_update
 from auth.steam_auth import steam_login_url, validate_steam_login, create_jwt_token, verify_jwt_token, SECRET_KEY, ALGORITHM
 
@@ -33,12 +33,14 @@ ALLOWED_ORIGINS = [
     "http://localhost:5500",   # Desenvolvimento local
     "http://127.0.0.1:5500",   # Desenvolvimento local alternativo
     "https://elite-skins-2025.github.io",  # GitHub Pages
-    "file://"  # Para suportar arquivos abertos localmente
+    "file://",  # Para suportar arquivos abertos localmente
+    "https://*.railway.app",   # Para o Railway
+    "*"  # Temporariamente permitir todas as origens para debug
 ]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
+    allow_origins=["*"],  # Temporariamente permitir todas as origens
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -357,32 +359,33 @@ async def api_status(response: Response, request: Request = None):
     apply_cors_headers(response, request)
     
     try:
-        # Obter status da API do Steam
-        api_check = get_api_status()
+        # Health check simples para o Railway
+        # Não verificamos componentes externos como API Steam ou detalhes do banco
+        # para garantir que o health check seja rápido e não falhe por problemas externos
         
-        # Obter estatísticas do banco de dados
-        db_stats = get_stats()
-        
-        # Obter status do agendador de atualizações
-        scheduler_status = get_scheduler_status()
+        # Tentativa básica de conexão com o banco para verificar se está funcionando
+        try:
+            conn = get_db_connection()
+            conn.close()
+            db_status = "online"
+        except Exception as e:
+            print(f"Aviso: Banco de dados não está acessível: {e}")
+            db_status = "offline"
         
         return {
             "status": "online",
             "version": "0.5.0",
             "timestamp": datetime.datetime.now().isoformat(),
+            "environment": os.environ.get("RAILWAY_ENVIRONMENT_NAME", "development"),
             "components": {
-                "api": api_check,
-                "database": db_stats,
-                "scheduler": scheduler_status
-            },
-            "uptime": "N/A"  # Em implementação futura
+                "database": db_status
+            }
         }
     except Exception as e:
         print(f"Erro ao verificar status da API: {e}")
-        import traceback
-        traceback.print_exc()
         
-        # Retornar erro
+        # Em caso de erro, ainda retornamos 200 para o health check passar
+        # mas com status parcial
         return {
             "status": "partial_outage",
             "error": str(e),
@@ -808,29 +811,41 @@ async def startup_event():
     """
     Inicializa recursos na inicialização da aplicação.
     """
-    # Inicializar o banco de dados SQLite
-    init_db()
-    print("Banco de dados SQLite inicializado com sucesso!")
+    print("=== INICIANDO API ELITE SKINS CS2 ===")
+    print(f"Ambiente: {os.environ.get('RAILWAY_ENVIRONMENT_NAME', 'desenvolvimento')}")
     
-    # Configurar a atualização semanal dos preços (Segunda-feira às 3:00)
-    schedule_weekly_update(day_of_week=0, hour=3, minute=0)
-    
-    # Iniciar o agendador em uma thread separada
-    run_scheduler()
-    print("Agendador de atualização de preços iniciado!")
+    try:
+        # Inicializar o banco de dados
+        print("Inicializando banco de dados...")
+        init_db()
+        print("Banco de dados inicializado com sucesso!")
+        
+        # Configurar a atualização semanal dos preços (Segunda-feira às 3:00)
+        print("Configurando atualizações programadas...")
+        schedule_weekly_update(day_of_week=0, hour=3, minute=0)
+        
+        # Iniciar o agendador em uma thread separada
+        run_scheduler()
+        print("Agendador de atualização de preços iniciado!")
+        
+        print("=== INICIALIZAÇÃO CONCLUÍDA COM SUCESSO ===")
+    except Exception as e:
+        print(f"ERRO NA INICIALIZAÇÃO: {e}")
+        import traceback
+        traceback.print_exc()
+        print("=== ATENÇÃO: API INICIADA COM ERROS ===")
 
 
 if __name__ == "__main__":
     # Aumentar número de workers e timeout para lidar melhor com requisições longas
     # Como o processamento de inventários grandes pode demorar
     
-    # Obter a porta do ambiente (para compatibilidade com Render e outros serviços de hospedagem)
+    # Obter a porta do ambiente (para compatibilidade com Railway e outros serviços de hospedagem)
     port = int(os.environ.get("PORT", 8000))
     
-    print("Starting server with CORS configuration enabled:")
-    print(f"- Allowed origins: {ALLOWED_ORIGINS}")
-    print("- CORS middleware and options handler configured")
-    print("- Custom CORS headers middleware added")
+    print(f"Iniciando servidor na porta {port}")
+    print("Configuração CORS:")
+    print(f"- Origens permitidas: {ALLOWED_ORIGINS}")
     
     # Aumentar os timeouts para lidar melhor com requisições CORS preflight
     uvicorn.run(
@@ -841,5 +856,5 @@ if __name__ == "__main__":
         workers=4,  # Mais workers para processar requisições em paralelo
         timeout_keep_alive=120,  # Manter conexões vivas por mais tempo (2 minutos)
         timeout_graceful_shutdown=30,  # Dar mais tempo para shutdown
-        log_level="info"  # Aumentar log para debug de CORS
+        log_level="info"
     )

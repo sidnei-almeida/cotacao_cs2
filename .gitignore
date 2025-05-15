@@ -41,7 +41,4 @@ data/skins_cache.db
 
 # IDE
 .idea/
-.vscode/
-
-# Fly.io specific
-.fly/ 
+.vscode/ 
