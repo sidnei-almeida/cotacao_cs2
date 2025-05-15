@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "memory": "512MB",
+  "memory": "1GB",
   "cpu": 1,
   "scale": {
     "instance_count": 1,
@@ -11,12 +11,12 @@
     "healthcheck": {
       "status_checker": {
         "enabled": true,
-        "path": "/railway-health",
+        "path": "/health",
         "method": "GET",
-        "interval": 15,
-        "timeout": 5,
-        "initially_passing": false,
-        "grace_period": 60
+        "interval": 30,
+        "timeout": 10,
+        "initially_passing": true,
+        "grace_period": 120
       }
     }
   }

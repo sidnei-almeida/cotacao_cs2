@@ -991,28 +991,23 @@ async def railway_health():
     """Health check ultra simplificado para Railway"""
     return {"status": "ok"}
 
-# Inicialização da aplicação
-@app.on_event("startup")
-async def startup_event():
+# Endpoint padrão para health check (usado por muitas plataformas)
+@app.get("/health")
+async def health():
+    """Health check padrão"""
+    return {"status": "ok"}
+
+# Adicionar esta função próxima ao startup_event
+async def delayed_startup():
     """
-    Inicializa recursos na inicialização da aplicação.
+    Executa tarefas de inicialização adicionais após o servidor já estar em execução.
+    Isso ajuda a garantir que o health check passe antes dessas tarefas.
     """
-    print("=== INICIANDO API ELITE SKINS CS2 ===")
-    print(f"Ambiente: {os.environ.get('RAILWAY_ENVIRONMENT_NAME', 'desenvolvimento')}")
-    
-    # Flag para controlar se o app iniciou com erros
-    app_started_with_errors = False
-    
     try:
-        # Inicializar o banco de dados com tratamento de exceção
-        print("Inicializando banco de dados...")
-        try:
-            init_db()
-            print("Banco de dados inicializado com sucesso!")
-        except Exception as db_error:
-            print(f"AVISO: Problema ao inicializar banco de dados: {db_error}")
-            print("A API continuará funcionando com banco de dados em memória.")
-            app_started_with_errors = True
+        # Esperar alguns segundos para garantir que o servidor já está respondendo
+        await asyncio.sleep(5)
+        
+        print("=== EXECUTANDO INICIALIZAÇÃO ADIADA ===")
         
         # Limpar preços antigos ou incorretos
         try:
@@ -1020,7 +1015,6 @@ async def startup_event():
             print(f"Limpeza automática de preços: {cleaned_count} itens removidos")
         except Exception as clean_error:
             print(f"AVISO: Não foi possível limpar preços antigos: {clean_error}")
-            app_started_with_errors = True
         
         # Configurar a atualização semanal dos preços (Segunda-feira às 3:00)
         try:
@@ -1032,12 +1026,36 @@ async def startup_event():
             print("Agendador de atualização de preços iniciado!")
         except Exception as scheduler_error:
             print(f"AVISO: Erro ao configurar agendador de preços: {scheduler_error}")
-            app_started_with_errors = True
         
-        if app_started_with_errors:
-            print("=== API INICIADA COM ALGUNS AVISOS (veja acima) ===")
-        else:
-            print("=== INICIALIZAÇÃO CONCLUÍDA COM SUCESSO ===")
+        print("=== INICIALIZAÇÃO ADIADA CONCLUÍDA ===")
+    except Exception as e:
+        print(f"ERRO NA INICIALIZAÇÃO ADIADA: {e}")
+        import traceback
+        traceback.print_exc()
+
+@app.on_event("startup")
+async def startup_event():
+    """
+    Inicializa recursos na inicialização da aplicação.
+    """
+    print("=== INICIANDO API ELITE SKINS CS2 ===")
+    print(f"Ambiente: {os.environ.get('RAILWAY_ENVIRONMENT_NAME', 'desenvolvimento')}")
+    print(f"Porta: {os.environ.get('PORT', 'não definida')}")
+    
+    try:
+        # Inicializar o banco de dados com tratamento de exceção
+        print("Inicializando banco de dados...")
+        try:
+            init_db()
+            print("Banco de dados inicializado com sucesso!")
+        except Exception as db_error:
+            print(f"AVISO: Problema ao inicializar banco de dados: {db_error}")
+            print("A API continuará funcionando com banco de dados em memória.")
+        
+        # Iniciar as tarefas adicionais em background
+        asyncio.create_task(delayed_startup())
+        
+        print("=== SERVIDOR INICIADO E PRONTO PARA RECEBER REQUISIÇÕES ===")
     except Exception as e:
         print(f"ERRO NA INICIALIZAÇÃO: {e}")
         import traceback

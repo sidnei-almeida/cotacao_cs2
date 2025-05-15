@@ -3,8 +3,8 @@ builder = "NIXPACKS"
 buildCommand = "pip install -r requirements.txt"
 
 [deploy]
-startCommand = "gunicorn -k uvicorn.workers.UvicornWorker -w 4 --timeout 120 --keep-alive 120 main:app -b 0.0.0.0:$PORT"
-healthcheckPath = "/railway-health"
+startCommand = "uvicorn main:app --host 0.0.0.0 --port $PORT --timeout-keep-alive 120"
+healthcheckPath = "/health"
 healthcheckTimeout = 300
 healthcheckInterval = 30
 retryInterval = 15
