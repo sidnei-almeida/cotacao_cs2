@@ -10,9 +10,9 @@ restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 5
 
 [envs]
-DATABASE_URL = "postgresql://postgres:nGFueZUdBGYipIfpFrxicixchLSgsShM@postgres.railway.internal:5432/railway"
-DB_HOST = "postgres.railway.internal"
-DB_PORT = "5432"
+DATABASE_URL = "postgresql://postgres:nGFueZUdBGYipIfpFrxicixchLSgsShM@gondola.proxy.rlwy.net:10790/railway"
+DB_HOST = "gondola.proxy.rlwy.net"
+DB_PORT = "10790"
 DB_NAME = "railway"
 DB_USER = "postgres"
 DB_PASSWORD = "nGFueZUdBGYipIfpFrxicixchLSgsShM" 

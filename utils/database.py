@@ -9,12 +9,18 @@ import socket
 import json
 import threading
 
-# URL de conexão com o PostgreSQL no Railway
-DATABASE_URL = os.environ.get('DATABASE_URL', 'postgresql://postgres:nGFueZUdBGYipIfpFrxicixchLSgsShM@postgres.railway.internal:5432/railway')
+# URL de conexão pública para o PostgreSQL no Railway
+PUBLIC_DATABASE_URL = 'postgresql://postgres:nGFueZUdBGYipIfpFrxicixchLSgsShM@gondola.proxy.rlwy.net:10790/railway'
+
+# URL de conexão interna (pode não funcionar fora do ambiente Railway)
+INTERNAL_DATABASE_URL = 'postgresql://postgres:nGFueZUdBGYipIfpFrxicixchLSgsShM@postgres.railway.internal:5432/railway'
+
+# URL de conexão prioritária com fallback para o público
+DATABASE_URL = os.environ.get('DATABASE_URL', PUBLIC_DATABASE_URL)
 
 # Componentes separados como fallback
-DB_HOST = os.environ.get('DB_HOST', 'postgres.railway.internal')
-DB_PORT = os.environ.get('DB_PORT', '5432')
+DB_HOST = os.environ.get('DB_HOST', 'gondola.proxy.rlwy.net')
+DB_PORT = os.environ.get('DB_PORT', '10790')
 DB_NAME = os.environ.get('DB_NAME', 'railway')
 DB_USER = os.environ.get('DB_USER', 'postgres')
 DB_PASSWORD = os.environ.get('DB_PASSWORD', 'nGFueZUdBGYipIfpFrxicixchLSgsShM')
@@ -35,42 +41,29 @@ def get_db_connection():
     ssl_modes = ['require', 'prefer', 'verify-ca', 'verify-full']
     last_error = None
     
-    # Verificação prévia do DNS para ajudar no diagnóstico
+    # 1. Primeira tentativa: Usar a URL pública (mais confiável)
     try:
-        print(f"Resolvendo DNS para {DB_HOST}...")
-        ip_address = socket.gethostbyname(DB_HOST)
-        print(f"Endereço IP resolvido: {ip_address}")
+        print(f"Tentando conectar com URL pública externa")
+        conn = psycopg2.connect(PUBLIC_DATABASE_URL, sslmode='require', connect_timeout=20)
+        print(f"Conexão bem-sucedida com URL pública")
+        DB_AVAILABLE = True
+        return conn
     except Exception as e:
-        print(f"Erro ao resolver DNS: {e}")
+        print(f"Erro ao conectar com URL pública: {e}")
+        last_error = e
     
-    # Se DATABASE_URL começa com postgres://, mudar para postgresql:// (compatibilidade Railway)
-    connection_url = DATABASE_URL
-    if connection_url.startswith('postgres://'):
-        connection_url = connection_url.replace('postgres://', 'postgresql://', 1)
-        print(f"URL de conexão corrigida para compatibilidade: {connection_url}")
-    
-    # 1. Primeira tentativa: usar a URL completa
-    for ssl_mode in ssl_modes:
+    # 2. Segunda tentativa: usar a URL interna (se disponível)
+    if 'railway.internal' in INTERNAL_DATABASE_URL:
         try:
-            # Parâmetros para a conexão
-            connection_params = {
-                'sslmode': ssl_mode,
-                'connect_timeout': 15,
-                'application_name': 'elite-skins-api',
-                'keepalives': 1,
-                'keepalives_idle': 30
-            }
-            
-            print(f"Tentando conectar ao PostgreSQL com URL completa e sslmode={ssl_mode}")
-            conn = psycopg2.connect(connection_url, **connection_params)
-            print(f"Conexão bem-sucedida com URL completa e sslmode={ssl_mode}")
+            print(f"Tentando conectar com URL interna do Railway")
+            conn = psycopg2.connect(INTERNAL_DATABASE_URL, sslmode='prefer', connect_timeout=15)
+            print(f"Conexão bem-sucedida com URL interna")
             DB_AVAILABLE = True
             return conn
         except Exception as e:
-            print(f"Erro ao conectar com URL completa e sslmode={ssl_mode}: {str(e)}")
-            last_error = e
+            print(f"Erro ao conectar com URL interna: {e}")
     
-    # 2. Segunda tentativa: usar componentes separados
+    # 3. Terceira tentativa: usar componentes separados
     for ssl_mode in ssl_modes:
         try:
             connect_params = {
@@ -94,17 +87,6 @@ def get_db_connection():
         except Exception as e:
             print(f"Erro ao conectar com parâmetros separados e sslmode={ssl_mode}: {str(e)}")
             last_error = e
-    
-    # 3. Tentativa adicional: Usar conexão pública (para desenvolvimento)
-    try:
-        public_url = 'postgresql://postgres:nGFueZUdBGYipIfpFrxicixchLSgsShM@gondola.proxy.rlwy.net:10790/railway'
-        print(f"Tentando conectar com URL pública como último recurso")
-        conn = psycopg2.connect(public_url, sslmode='require', connect_timeout=20)
-        print(f"Conexão bem-sucedida com URL pública")
-        DB_AVAILABLE = True
-        return conn
-    except Exception as e:
-        print(f"Erro ao conectar com URL pública: {e}")
     
     # Se chegou aqui, todas as tentativas falharam
     error_msg = f"""
