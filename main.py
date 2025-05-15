@@ -48,7 +48,7 @@ ALLOWED_ORIGINS = [
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Permitir todas as origens temporariamente para desenvolvimento
+    allow_origins=ALLOWED_ORIGINS,  # Usar a lista de origens permitidas em vez de "*"
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],  # Permitir todos os cabeçalhos para resolver os problemas
@@ -58,10 +58,18 @@ app.add_middleware(
 # Middleware personalizado para adicionar cabeçalhos CORS em todas as respostas
 class CORSMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
+        # Obter a origem da requisição
+        origin = request.headers.get("origin", "*")
+        
         # Para requisições OPTIONS (preflight), responder imediatamente com os cabeçalhos CORS
         if request.method == "OPTIONS":
             response = Response()
-            response.headers["Access-Control-Allow-Origin"] = "*"
+            # Se a origem for permitida, retorná-la em vez de "*"
+            if origin in ALLOWED_ORIGINS or "*" in ALLOWED_ORIGINS:
+                response.headers["Access-Control-Allow-Origin"] = origin
+            else:
+                response.headers["Access-Control-Allow-Origin"] = "*"
+                
             response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
             response.headers["Access-Control-Allow-Headers"] = "*"
             response.headers["Access-Control-Allow-Credentials"] = "true"
@@ -72,7 +80,12 @@ class CORSMiddleware(BaseHTTPMiddleware):
         response = await call_next(request)
         
         # Adicionar cabeçalhos CORS a todas as respostas
-        response.headers["Access-Control-Allow-Origin"] = "*"
+        # Se a origem for permitida, retorná-la em vez de "*"
+        if origin in ALLOWED_ORIGINS or "*" in ALLOWED_ORIGINS:
+            response.headers["Access-Control-Allow-Origin"] = origin
+        else:
+            response.headers["Access-Control-Allow-Origin"] = "*"
+            
         response.headers["Access-Control-Allow-Credentials"] = "true"
         response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
         response.headers["Access-Control-Allow-Headers"] = "*"
