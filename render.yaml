@@ -2,8 +2,8 @@ services:
   - type: web
     name: cs2-valuation-api
     env: python
-    buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn -k uvicorn.workers.UvicornWorker -w 4 --timeout 120 --keep-alive 120 main:app -b 0.0.0.0:$PORT
+    buildCommand: pip install -r requirements.txt && chmod +x railway_prebuild.sh && ./railway_prebuild.sh
+    startCommand: gunicorn -k uvicorn.workers.UvicornWorker -w 4 --timeout 120 --keep-alive 120 railway_app:application -b 0.0.0.0:$PORT
     envVars:
       - key: PYTHON_VERSION
         value: 3.10.0

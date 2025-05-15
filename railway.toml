@@ -3,7 +3,7 @@ builder = "NIXPACKS"
 buildCommand = "pip install -r requirements.txt"
 
 [deploy]
-startCommand = "gunicorn wsgi:application -c gunicorn_config.py"
+startCommand = "gunicorn railway_app:application -k uvicorn.workers.UvicornWorker -c gunicorn_config.py"
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 5
 

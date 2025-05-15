@@ -1,1 +1,1 @@
-web: gunicorn wsgi:application -c gunicorn_config.py 
+web: gunicorn railway_app:application -k uvicorn.workers.UvicornWorker -c gunicorn_config.py 
