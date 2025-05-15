@@ -8,4 +8,15 @@ services:
       - key: PYTHON_VERSION
         value: 3.10.0
       - key: DATABASE_URL
-        value: postgresql://postgres:apuculacata@db.ykaatdxdvkcuryswejkm.supabase.co:5432/postgres 
+        value: postgresql://postgres:apuculacata@db.ykaatdxdvkcuryswejkm.supabase.co:5432/postgres?sslmode=prefer&application_name=elite-skins-api&connection_limit=5&keepalives=1&keepalives_idle=30
+      # Componentes separados como alternativa
+      - key: DB_HOST
+        value: db.ykaatdxdvkcuryswejkm.supabase.co
+      - key: DB_PORT
+        value: 5432
+      - key: DB_NAME
+        value: postgres
+      - key: DB_USER
+        value: postgres
+      - key: DB_PASSWORD
+        value: apuculacata 

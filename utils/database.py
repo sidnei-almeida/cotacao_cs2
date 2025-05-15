@@ -5,14 +5,112 @@ from typing import List, Dict, Optional, Tuple
 import psycopg2
 from psycopg2.extras import RealDictCursor, execute_values
 import urllib.parse
+import socket
 
 # URL de conexão com o PostgreSQL
 DATABASE_URL = os.environ.get('DATABASE_URL', 'postgresql://postgres:apuculacata@db.ykaatdxdvkcuryswejkm.supabase.co:5432/postgres')
 
+# Componentes separados como fallback
+DB_HOST = os.environ.get('DB_HOST', 'db.ykaatdxdvkcuryswejkm.supabase.co')
+DB_PORT = os.environ.get('DB_PORT', '5432')
+DB_NAME = os.environ.get('DB_NAME', 'postgres')
+DB_USER = os.environ.get('DB_USER', 'postgres')
+DB_PASSWORD = os.environ.get('DB_PASSWORD', 'apuculacata')
+
 def get_db_connection():
     """Cria uma conexão com o banco de dados PostgreSQL."""
-    conn = psycopg2.connect(DATABASE_URL)
-    return conn
+    # Lista de modos SSL para tentar, em ordem de preferência
+    ssl_modes = ['prefer', 'require', 'verify-ca', 'verify-full']
+    last_error = None
+    
+    # Verificação prévia do DNS para ajudar no diagnóstico
+    try:
+        print(f"Resolvendo DNS para {DB_HOST}...")
+        ip_address = socket.gethostbyname(DB_HOST)
+        print(f"Endereço IP resolvido: {ip_address}")
+    except Exception as e:
+        print(f"Erro ao resolver DNS: {e}")
+    
+    # 1. Primeira tentativa: usar a URL completa
+    for ssl_mode in ssl_modes:
+        try:
+            # Parâmetros para a conexão
+            connection_params = {
+                'sslmode': ssl_mode,
+                'connect_timeout': 15,
+                'application_name': 'elite-skins-api',
+                'keepalives': 1,
+                'keepalives_idle': 30
+            }
+            
+            print(f"Tentando conectar ao PostgreSQL com URL completa e sslmode={ssl_mode}")
+            conn = psycopg2.connect(DATABASE_URL, **connection_params)
+            print(f"Conexão bem-sucedida com URL completa e sslmode={ssl_mode}")
+            return conn
+        except Exception as e:
+            print(f"Erro ao conectar com URL completa e sslmode={ssl_mode}: {str(e)}")
+            last_error = e
+    
+    # 2. Segunda tentativa: usar componentes separados
+    for ssl_mode in ssl_modes:
+        try:
+            connect_params = {
+                'host': DB_HOST,
+                'port': DB_PORT,
+                'dbname': DB_NAME,
+                'user': DB_USER,
+                'password': DB_PASSWORD,
+                'sslmode': ssl_mode,
+                'connect_timeout': 15,
+                'application_name': 'elite-skins-api',
+                'keepalives': 1,
+                'keepalives_idle': 30
+            }
+            
+            print(f"Tentando conectar ao PostgreSQL com parâmetros separados e sslmode={ssl_mode}")
+            conn = psycopg2.connect(**connect_params)
+            print(f"Conexão bem-sucedida com parâmetros separados e sslmode={ssl_mode}")
+            return conn
+        except Exception as e:
+            print(f"Erro ao conectar com parâmetros separados e sslmode={ssl_mode}: {str(e)}")
+            last_error = e
+    
+    # 3. Terceira tentativa: Usar a URL por dicionário de parâmetros
+    try:
+        parsed = urllib.parse.urlparse(DATABASE_URL)
+        connect_params = {
+            'host': parsed.hostname,
+            'port': parsed.port or 5432,
+            'dbname': parsed.path[1:],
+            'user': parsed.username,
+            'password': parsed.password,
+            'sslmode': 'prefer',
+            'connect_timeout': 20
+        }
+        
+        print(f"Tentando conectar com URL parseada como dicionário")
+        conn = psycopg2.connect(**connect_params)
+        print(f"Conexão bem-sucedida com URL parseada")
+        return conn
+    except Exception as e:
+        print(f"Erro ao conectar com URL parseada: {e}")
+    
+    # Se chegou aqui, todas as tentativas falharam
+    error_msg = f"""
+    Erro de conexão com o banco de dados PostgreSQL:
+    - Host: {DB_HOST}
+    - Porta: {DB_PORT}
+    - Banco: {DB_NAME}
+    - Usuário: {DB_USER}
+    - Erro: {str(last_error)}
+    - Sugestões:
+      1. Verifique se o banco de dados está acessível e online
+      2. Confirme se as credenciais estão corretas
+      3. O Render pode estar bloqueando conexões de saída
+      4. Verifique se o plano do Supabase permite conexões externas
+    """
+    print(error_msg)
+    raise last_error
 
 def init_db():
     """Inicializa o banco de dados com as tabelas necessárias."""
