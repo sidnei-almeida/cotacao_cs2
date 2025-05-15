@@ -1,0 +1,42 @@
+app = "elite-skins-cs2-api"
+primary_region = "gru"  # São Paulo, Brasil (ou escolha outra região como "iad" para Virginia/EUA)
+kill_signal = "SIGINT"
+kill_timeout = "5s"
+
+[build]
+  builder = "paketobuildpacks/builder:full"
+
+[env]
+  PORT = "8080"
+  DATABASE_URL = "postgresql://postgres:apuculacata@db.ykaatdxdvkcuryswejkm.supabase.co:5432/postgres?sslmode=prefer&application_name=elite-skins-api&connection_limit=5&keepalives=1&keepalives_idle=30"
+  DB_HOST = "db.ykaatdxdvkcuryswejkm.supabase.co"
+  DB_PORT = "5432"
+  DB_NAME = "postgres"
+  DB_USER = "postgres"
+  DB_PASSWORD = "apuculacata"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = true
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ["app"]
+
+[[services.ports]]
+  port = 80
+  handlers = ["http"]
+  force_https = true
+
+[[services.ports]]
+  port = 443
+  handlers = ["tls", "http"]
+
+[[services.http_checks]]
+  interval = "10s"
+  timeout = "2s"
+  grace_period = "30s"
+  method = "GET"
+  path = "/api/status"
+  protocol = "http"
+  tls_skip_verify = false 
