@@ -6,18 +6,5 @@
     "instance_count": 1,
     "min_instance_count": 1,
     "max_instance_count": 1
-  },
-  "features": {
-    "healthcheck": {
-      "status_checker": {
-        "enabled": true,
-        "path": "/health",
-        "method": "GET",
-        "interval": 30,
-        "timeout": 10,
-        "initially_passing": true,
-        "grace_period": 120
-      }
-    }
   }
 } 
