@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Query, Request, Depends, Response
+from fastapi import FastAPI, HTTPException, Query, Request, Depends, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 from fastapi.security import OAuth2PasswordBearer
@@ -10,13 +10,16 @@ from jwt.exceptions import PyJWTError
 import os
 import datetime
 from urllib.parse import urlencode
+import json
+import asyncio
+import secrets
 
 # Importando serviços e configurações
-from services.steam_inventory import get_inventory_value, get_storage_unit_contents
-from services.case_evaluator import get_case_details, list_cases
+from services.steam_inventory import get_inventory_value, get_storage_unit_contents, analyze_inventory, analyze_own_inventory_complete
+from services.case_evaluator import get_case_details, list_cases, get_all_cases, evaluate_case
 from services.steam_market import get_item_price, get_api_status
 from utils.config import get_api_config
-from utils.database import init_db, get_stats, get_db_connection
+from utils.database import init_db, get_stats, get_db_connection, clean_price_database
 from utils.price_updater import run_scheduler, force_update_now, get_scheduler_status, schedule_weekly_update
 from auth.steam_auth import steam_login_url, validate_steam_login, create_jwt_token, verify_jwt_token, SECRET_KEY, ALGORITHM
 
@@ -38,7 +41,10 @@ ALLOWED_ORIGINS = [
     "http://127.0.0.1:5500",   # Desenvolvimento local alternativo
     "https://elite-skins-2025.github.io",  # GitHub Pages
     "file://",  # Para suportar arquivos abertos localmente
-    "https://*.railway.app"   # Para o Railway
+    "https://*.railway.app",   # Para o Railway
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "https://elite-skins-2025.firebaseapp.com"
 ]
 
 app.add_middleware(
@@ -900,6 +906,35 @@ async def initialize_database(admin_key: str = Query(None), response: Response =
             "message": f"Erro inesperado: {str(e)}"
         }
 
+# Adicionar um novo endpoint para limpeza de preços
+@app.post("/api/db/clean-prices")
+async def clean_prices(items: Optional[List[str]] = None, days: int = 30, admin_key: str = None):
+    """
+    Limpa preços potencialmente incorretos do banco de dados.
+    Requer chave de administrador para acesso.
+    
+    Args:
+        items: Lista de nomes de itens para limpar (opcional)
+        days: Número de dias para considerar um preço antigo
+        admin_key: Chave administrativa (obrigatória)
+    """
+    # Verificar se a chave admin é válida (proteção simples)
+    expected_key = os.environ.get("ADMIN_KEY")
+    if not expected_key or admin_key != expected_key:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Acesso não autorizado"
+        )
+    
+    # Executar limpeza
+    cleaned_count = clean_price_database(items_to_clean=items, threshold_days=days)
+    
+    return {
+        "status": "success",
+        "items_cleaned": cleaned_count,
+        "message": f"Limpeza concluída: {cleaned_count} itens removidos do banco de dados"
+    }
+
 # Inicialização da aplicação
 @app.on_event("startup")
 async def startup_event():
@@ -914,6 +949,10 @@ async def startup_event():
         print("Inicializando banco de dados...")
         init_db()
         print("Banco de dados inicializado com sucesso!")
+        
+        # Limpar preços antigos ou incorretos
+        cleaned_count = clean_price_database()
+        print(f"Limpeza automática de preços: {cleaned_count} itens removidos")
         
         # Configurar a atualização semanal dos preços (Segunda-feira às 3:00)
         print("Configurando atualizações programadas...")

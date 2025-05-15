@@ -368,42 +368,178 @@ def process_scraped_price(market_hash_name: str, price: float) -> float:
     # Verificar se o preço é válido
     if price is None or price <= 0:
         return 0.0
-        
-    # Primeiro, verificar valores extremamente altos para evitar erros evidentes
-    # Como "The Elite Mr. Muhlik | Elite" avaliado incorretamente a 5000 reais
-    if "Mr. Muhlik" in market_hash_name and price > 1000:
-        print(f"Correção de valor extremo para {market_hash_name}: {price} -> 300.0")
-        price = 300.0  # Valor mais plausível
     
-    # Categorias de itens problemáticos conhecidos
+    # PASSO 1: CORREÇÕES PARA ITENS ESPECÍFICOS COM PROBLEMAS CONHECIDOS
+    # ---------------------------------------------------------------
+    
+    # Lista de itens com preços incorretos frequentes (valores em BRL)
     known_problematic_items = {
         "The Elite Mr. Muhlik": 300.0,
         "The Doctor": 250.0,
         "Dragon Lore": 15000.0,
         "Howl": 8000.0,
         "Fire Serpent": 4500.0,
-        "Gungnir": 10000.0
+        "Gungnir": 10000.0,
+        "Soldier | Phoenix": 21.0,
+        "Michael Syfers": 20.0,
+        "Vypa Sista": 9.0,
+        "Bloody Darryl": 15.0,
+        "Cmdr. Frank": 12.0,
+        "Operator | SWAT": 7.0,
+        "Operator | FBI": 8.0,
     }
     
     # Verificar se é um item problemático conhecido
     for item_name, correct_price in known_problematic_items.items():
         if item_name in market_hash_name:
             print(f"Usando valor corrigido para {market_hash_name}: {correct_price}")
-            price = correct_price
+            # Ainda assim, adicionar ao histórico para referência
+            price_history_manager.add_price(market_hash_name, correct_price)
+            return correct_price
+    
+    # PASSO 2: VERIFICAÇÃO DE LIMITES RAZOÁVEIS POR CATEGORIA
+    # ---------------------------------------------------------------
+    
+    # Limites máximos razoáveis por categoria (em BRL)
+    category_price_limits = {
+        # Padrão (armas comuns)
+        "default": 2000.0,
+        
+        # Facas e luvas (itens tipicamente caros)
+        "Knife": 50000.0,
+        "★": 50000.0,  # Símbolo de facas
+        "Gloves": 20000.0,
+        "Luvas": 20000.0,
+
+        # Agentes
+        "Agent": 350.0,
+        "The Doctor": 250.0,
+        "The Elite": 300.0,
+        "Michael Syfers": 150.0,
+        "Vypa Sista": 100.0,
+        "Street Soldier": 100.0,
+        "Operator": 100.0,
+        "Cmdr.": 100.0,
+        
+        # Stickers
+        "Sticker": 300.0,
+        "Adesivo": 300.0,
+        
+        # Coleções raras
+        "Lore": 30000.0,
+        "Gamma": 15000.0,
+        "Asiimov": 10000.0,
+        "Fade": 8000.0,
+        "Doppler": 8000.0,
+        "Slaughter": 5000.0,
+    }
+    
+    # Determinar limite máximo apropriado
+    max_price_limit = category_price_limits["default"]
+    
+    for category, limit in category_price_limits.items():
+        if category in market_hash_name:
+            max_price_limit = limit
             break
-            
+    
+    # Se o preço exceder muito o limite razoável para a categoria
+    if price > max_price_limit * 1.5:
+        print(f"ALERTA: Preço acima do limite para {market_hash_name}: {price:.2f} > {max_price_limit:.2f}")
+        
+        # Em vez de simplesmente truncar, verificar o histórico
+        last_price = None
+        if market_hash_name in price_history_manager.price_history:
+            history = price_history_manager.price_history[market_hash_name]
+            if history:
+                # Obter preço mediano histórico recente (até 10 entradas mais recentes)
+                recent_prices = [p[0] for p in history[:10]]
+                if recent_prices:
+                    last_price = np.median(recent_prices)
+        
+        # Se tivermos histórico, limitar a um aumento máximo de 30%
+        if last_price and last_price > 0:
+            corrected_price = min(price, last_price * 1.3)
+            print(f"Corrigindo com base no histórico: {price:.2f} -> {corrected_price:.2f}")
+            price = corrected_price
+        else:
+            # Sem histórico, aplicar limite máximo da categoria + 20%
+            corrected_price = max_price_limit * 1.2
+            print(f"Sem histórico, aplicando limite da categoria: {price:.2f} -> {corrected_price:.2f}")
+            price = corrected_price
+    
+    # PASSO 3: VERIFICAÇÃO DA CONVERSÃO DE MOEDA
+    # ---------------------------------------------------------------
+    
+    # Verificar se o valor está em outra moeda (USD -> BRL)
+    # Isso pode acontecer se a API retornar valores em USD mas não converter corretamente
+    if "StatTrak™" in market_hash_name and price < 10.0:
+        # StatTrak™ itens geralmente custam mais, valores muito baixos indicam erro de conversão
+        print(f"Possível erro de conversão USD -> BRL para {market_hash_name}: {price:.2f}")
+        # Multiplicar pelo fator de conversão aproximado USD -> BRL
+        price = price * 5.0  # Taxa de conversão aproximada
+        print(f"Valor convertido: {price:.2f}")
+    
+    # PASSO 4: APLICAR IQR MAIS AGRESSIVO NOS DADOS HISTÓRICOS
+    # ---------------------------------------------------------------
+    
     # Adicionar o preço ao histórico
     price_history_manager.add_price(market_hash_name, price)
     
-    # Obter o preço limpo baseado no histórico
-    clean_price = price_history_manager.get_clean_price(market_hash_name)
+    # Verificar se temos dados históricos suficientes (pelo menos 3 pontos)
+    if (market_hash_name in price_history_manager.price_history and 
+        len(price_history_manager.price_history[market_hash_name]) >= 3):
+        
+        # Obter todos os preços do histórico
+        hist_prices = [p[0] for p in price_history_manager.price_history[market_hash_name]]
+        
+        try:
+            # Calcular IQR - mais agressivo (1.0 em vez de 1.5)
+            q1 = np.percentile(hist_prices, 25)
+            q3 = np.percentile(hist_prices, 75)
+            iqr = q3 - q1
+            
+            # Limites mais restritivos (multiplicador 1.0 em vez de 1.5)
+            lower_bound = q1 - 1.0 * iqr
+            upper_bound = q3 + 1.0 * iqr
+            
+            # Se o preço atual estiver fora dos limites, usar a mediana
+            if price < lower_bound or price > upper_bound:
+                median_price = np.median(hist_prices)
+                print(f"Preço fora dos limites IQR para {market_hash_name}: {price:.2f} -> {median_price:.2f}")
+                print(f"Limites IQR: [{lower_bound:.2f}, {upper_bound:.2f}]")
+                price = median_price
+        except Exception as e:
+            print(f"Erro ao aplicar IQR para {market_hash_name}: {e}")
     
-    # Se não temos dados históricos suficientes, usar o preço atual
-    if clean_price is None:
-        return price
+    # PASSO 5: MÉDIA TRUNCADA (remover extremos e calcular média)
+    # ---------------------------------------------------------------
+    
+    # Se tivermos pelo menos 5 pontos, aplicar média truncada
+    if (market_hash_name in price_history_manager.price_history and 
+        len(price_history_manager.price_history[market_hash_name]) >= 5):
         
-    # Mostrar informação de debug se o preço mudou significativamente
-    if abs(clean_price - price) / price > 0.2:  # Diferença > 20%
-        print(f"Correção de preço para {market_hash_name}: {price:.2f} -> {clean_price:.2f}")
-        
-    return clean_price
+        try:
+            # Obter preços ordenados
+            hist_prices = sorted([p[0] for p in price_history_manager.price_history[market_hash_name]])
+            
+            # Remover 10% dos extremos (tanto inferiores quanto superiores)
+            truncate_count = int(len(hist_prices) * 0.1)
+            if truncate_count > 0:
+                truncated_prices = hist_prices[truncate_count:-truncate_count]
+                truncated_mean = sum(truncated_prices) / len(truncated_prices)
+                
+                # Se a diferença for significativa (>20%), usar a média truncada
+                if abs(price - truncated_mean) / max(price, truncated_mean) > 0.2:
+                    print(f"Usando média truncada para {market_hash_name}: {price:.2f} -> {truncated_mean:.2f}")
+                    price = truncated_mean
+        except Exception as e:
+            print(f"Erro ao calcular média truncada para {market_hash_name}: {e}")
+    
+    # Limitar preços mínimos para evitar valores absurdamente baixos
+    min_price = 0.5  # Preço mínimo em BRL
+    price = max(price, min_price)
+    
+    # Arredondar valor final para evitar centavos estranhos
+    price = round(price, 2)
+    
+    return price
