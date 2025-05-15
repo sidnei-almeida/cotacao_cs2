@@ -9,6 +9,7 @@ import jwt
 from jwt.exceptions import PyJWTError
 import os
 import datetime
+from urllib.parse import urlencode
 
 # Importando serviços e configurações
 from services.steam_inventory import get_inventory_value, get_storage_unit_contents
@@ -450,18 +451,34 @@ def get_current_user(token: str = Depends(oauth2_scheme)):
 
 # Endpoints para autenticação com a Steam
 @app.get("/auth/steam")
-async def steam_auth(request: Request, redirect_local: bool = False):
+async def steam_auth(request: Request, redirect_local: bool = False, return_url: str = None):
     """Redireciona para o login da Steam"""
     # URL base para a API
     base_url = str(request.base_url).rstrip('/')
     redirect_uri = f"{base_url}/auth/steam/callback"
     
+    # Adicionar parâmetros para a URL de callback
+    params = {}
+    
     # Adicionar parâmetro para indicar redirecionamento local
     if redirect_local:
-        redirect_uri += "?redirect_local=true"
+        params["redirect_local"] = "true"
+    
+    # Adicionar URL de retorno se fornecida
+    if return_url:
+        params["return_url"] = return_url
+        print(f"URL de retorno recebida: {return_url}")
+    
+    # Adicionar parâmetros à URL de callback
+    if params:
+        redirect_uri += "?" + urlencode(params)
+    
+    print(f"URL de callback configurada: {redirect_uri}")
     
     # Gerar URL de login
     login_url = steam_login_url(redirect_uri)
+    print(f"URL de login com Steam: {login_url}")
+    
     return RedirectResponse(url=login_url)
 
 
@@ -492,19 +509,51 @@ async def steam_callback(request: Request):
             print(f"Redirecionando para: {frontend_url}?token={token}")
             print(f"Ambiente: Produção")
         
-        # Receber URL de retorno personalizado, se fornecido
-        custom_return_url = params.get("return_url")
-        if custom_return_url:
-            frontend_url = custom_return_url
-            print(f"Usando URL de retorno personalizado: {frontend_url}")
+        # Receber URL de retorno personalizado, se fornecido na requisição original
+        # Verificar se a URL de retorno foi passada na requisição original
+        return_url_param = next((p for p in params.keys() if "return_url" in p), None)
+        if return_url_param:
+            custom_return_url = params[return_url_param]
+            if custom_return_url:
+                frontend_url = custom_return_url
+                print(f"Usando URL de retorno personalizado: {frontend_url}")
+                print(f"Parâmetro de retorno: {return_url_param}={custom_return_url}")
         
         # Redirecionar para o frontend com o token como parâmetro
         redirect_url = f"{frontend_url}?token={token}"
+        
+        # Registrar informações adicionais para debug
+        print(f"Parâmetros recebidos no callback: {params}")
+        print(f"URL final de redirecionamento: {redirect_url}")
         
         # Retornar um redirecionamento HTTP 302
         return RedirectResponse(url=redirect_url)
     else:
         return {"error": "Falha na autenticação com a Steam"}
+
+
+# Endpoint de teste para redirecionamento
+@app.get("/auth/test-redirect")
+async def test_redirect(request: Request, return_url: str = None):
+    """Endpoint de teste para verificar como a URL de retorno é tratada"""
+    # Extrair parâmetros da resposta
+    params = dict(request.query_params)
+    
+    # Obter URL base
+    base_url = str(request.base_url).rstrip('/')
+    
+    # Informações de debug
+    debug_info = {
+        "request_url": str(request.url),
+        "base_url": base_url,
+        "params": params,
+        "return_url": return_url,
+        "headers": dict(request.headers),
+        "would_redirect_to": return_url if return_url else "No return URL provided",
+        "info": "Este é um endpoint de teste para verificar o redirecionamento. Não faz redirecionamento real."
+    }
+    
+    return debug_info
 
 
 # Endpoint para análise completa de inventário (incluindo conteúdo das Unidades de Armazenamento)
