@@ -48,31 +48,6 @@ QUALITY_NAMES = {
     "BS": "Battle-Scarred"
 }
 
-# Adicionamos mock prices para desenvolvimento e fallback
-mock_prices = {
-    "Operation Broken Fang Case": 3.50,
-    "Prisma Case": 15.75,
-    "Clutch Case": 5.20,
-    "Snakebite Case": 2.85,
-    "AWP | Asiimov (Field-Tested)": 350.0,
-    "AK-47 | Redline (Field-Tested)": 120.0,
-    "★ Karambit | Doppler (Factory New)": 3500.0,
-    "★ Karambit": 2500.0,
-    "★ Butterfly Knife": 3200.0,
-    "★ M9 Bayonet": 1900.0,
-    "★ Bayonet": 1600.0,
-    "★ Flip Knife": 1200.0,
-    "★ Gut Knife": 800.0,
-    "M4A4 | The Emperor (Minimal Wear)": 85.0,
-    "USP-S | Kill Confirmed (Well-Worn)": 155.0,
-    # Itens de alto valor
-    "★ Gloves": 1800.0,
-    "★ Sport Gloves": 2200.0,
-    "★ Driver Gloves": 1900.0,
-    "★ Specialist Gloves": 2100.0,
-    "StatTrak™": 350.0,  # Valor base para qualquer item StatTrak
-}
-
 
 def sleep_between_requests(min_delay=STEAM_REQUEST_DELAY):
     """
@@ -392,61 +367,9 @@ def get_item_price(market_hash_name: str, currency: int = None, appid: int = Non
     
     # Classificar o item em categorias para determinar limites de preço razoáveis
     item_category, price_limit = classify_item_and_get_price_limit(market_hash_name)
-    print(f"Item {market_hash_name} classificado como: {item_category} (Limite: R$ {price_limit:.2f})")
+    print(f"Item {market_hash_name} classificado como: {item_category} (Limite de referência: R$ {price_limit:.2f})")
     
-    # Iniciar com base no nome do item
-    price = 0.0
-    
-    # CORREÇÃO: Tratamento especial para itens problemáticos conhecidos
-    known_problematic_items = {
-        "Soldier | Phoenix": 21.0,
-        "SWAT | Operator": 20.0,
-        "The Elite Mr. Muhlik": 30.0,
-        "The Doctor": 25.0,
-        "SAIDAN | Cypher": 22.0,
-        "Cmdr. Frank | Wet Sox": 20.0,
-        "1st Lieutenant Farlow": 22.0
-    }
-    
-    # Verificar se é um item problemático conhecido
-    for item_name, fixed_price in known_problematic_items.items():
-        if item_name in market_hash_name:
-            print(f"CORREÇÃO: Usando preço fixo para {market_hash_name}: R$ {fixed_price}")
-            price_cache[cache_key] = fixed_price
-            save_skin_price(market_hash_name, fixed_price, currency, appid)  # Salvar no banco
-            return fixed_price
-    
-    # Verificar preços mockados antes do scraping
-    for mock_name, mock_price in mock_prices.items():
-        if mock_name.lower() in market_hash_name.lower():
-            # Aplicar o limite de preço baseado na categoria
-            capped_price = min(mock_price, price_limit)
-            if capped_price < mock_price:
-                print(f"CORREÇÃO: Limitando preço mockado para {market_hash_name}: de R$ {mock_price} para R$ {capped_price}")
-            else:
-                print(f"Usando preço mockado para {market_hash_name}: R$ {capped_price}")
-            
-            # Registrar este preço no histórico para análise futura
-            price_cache[cache_key] = capped_price
-            save_skin_price(market_hash_name, capped_price, currency, appid)  # Salvar no banco
-            return capped_price
-    
-    # Se o item não tem preço mockado específico, tentar estimar com base em características
-    estimated_price = estimate_price_from_characteristics(market_hash_name)
-    if estimated_price > 0:
-        # Aplicar o limite de preço baseado na categoria
-        capped_price = min(estimated_price, price_limit)
-        if capped_price < estimated_price:
-            print(f"CORREÇÃO: Limitando preço estimado para {market_hash_name}: de R$ {estimated_price} para R$ {capped_price}")
-        else:
-            print(f"Usando preço estimado para {market_hash_name}: R$ {capped_price}")
-        
-        # Registrar preço estimado no histórico para análise
-        price_cache[cache_key] = capped_price
-        save_skin_price(market_hash_name, capped_price, currency, appid)  # Salvar no banco
-        return capped_price
-    
-    # Apenas se não conseguiu encontrar preço de outra forma, tentar scraping
+    # Buscar preço via scraping
     try:
         print(f"Buscando preço via scraping para {market_hash_name}")
         raw_price = get_item_price_via_scraping(market_hash_name, appid, currency) or 0.0
@@ -454,14 +377,8 @@ def get_item_price(market_hash_name: str, currency: int = None, appid: int = Non
         # Registrar que o scraping foi feito para este item
         update_last_scrape_time(market_hash_name, currency, appid)
         
-        # Processar o preço obtido usando o sistema que inclui histórico e correções
+        # Processar o preço obtido usando o sistema que inclui histórico e correções estatísticas
         price = process_scraped_price(market_hash_name, raw_price)
-        
-        # Aplicar o limite de preço baseado na categoria
-        capped_price = min(price, price_limit)
-        if capped_price < price and price > 0:
-            print(f"CORREÇÃO: Limitando preço de scraping para {market_hash_name}: de R$ {price} para R$ {capped_price}")
-            price = capped_price
         
         # Se o scraping retornou um valor válido, usar e armazenar no cache
         if price > 0:
@@ -471,8 +388,7 @@ def get_item_price(market_hash_name: str, currency: int = None, appid: int = Non
             return price
     except Exception as e:
         print(f"Erro ao fazer scraping para {market_hash_name}: {e}")
-        # Aplicar preço fallback
-        price = 2.0
+        price = 1.0  # Preço fallback mínimo
     
     # Garantir um preço mínimo sensível para itens não encontrados
     price = max(price, 1.0)
