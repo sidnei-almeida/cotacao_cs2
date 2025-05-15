@@ -935,6 +935,58 @@ async def clean_prices(items: Optional[List[str]] = None, days: int = 30, admin_
         "message": f"Limpeza concluída: {cleaned_count} itens removidos do banco de dados"
     }
 
+# Add this new endpoint before the "if __name__ == "__main__"" section
+@app.get("/api/db/clear-all-prices")
+async def clear_all_prices(admin_key: str = Query(None), response: Response = None):
+    """
+    Remove TODOS os preços de skins do banco de dados.
+    Requer chave de administrador.
+    """
+    if response:
+        apply_cors_headers(response)
+    
+    # Verificar se a chave de admin está correta
+    expected_key = os.environ.get("ADMIN_KEY", "elite-skins-admin-2023")
+    if admin_key != expected_key:
+        raise HTTPException(status_code=403, detail="Acesso não autorizado")
+    
+    try:
+        conn = get_db_connection()
+        if not conn:
+            return {
+                "status": "error",
+                "message": "Não foi possível conectar ao banco de dados"
+            }
+            
+        cursor = conn.cursor()
+        
+        # Remover todos os registros da tabela skin_prices
+        cursor.execute("DELETE FROM skin_prices")
+        deleted_count = cursor.rowcount
+        
+        conn.commit()
+        conn.close()
+        
+        # Limpar também o cache em memória
+        from utils.database import in_memory_db, db_lock
+        with db_lock:
+            item_count = len(in_memory_db['skin_prices'])
+            in_memory_db['skin_prices'] = {}
+        
+        return {
+            "status": "success",
+            "message": f"Todos os preços foram removidos com sucesso!",
+            "deleted_from_db": deleted_count,
+            "deleted_from_memory": item_count
+        }
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return {
+            "status": "error",
+            "message": f"Erro ao limpar dados: {str(e)}"
+        }
+
 # Inicialização da aplicação
 @app.on_event("startup")
 async def startup_event():
