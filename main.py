@@ -72,7 +72,7 @@ class CustomCORSMiddleware(BaseHTTPMiddleware):
             else:
                 # Se não houver origem ou não for permitida, usar wildcard
                 response.headers["Access-Control-Allow-Origin"] = "*"
-                
+            
             response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
             response.headers["Access-Control-Allow-Headers"] = "*"
             response.headers["Access-Control-Allow-Credentials"] = "true"
@@ -88,9 +88,10 @@ class CustomCORSMiddleware(BaseHTTPMiddleware):
                 response.headers["Access-Control-Allow-Origin"] = origin
             else:
                 response.headers["Access-Control-Allow-Origin"] = "*"
-                
+            
             response.headers["Access-Control-Allow-Credentials"] = "true"
             response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+            response.headers["Access-Control-Allow-Headers"] = "*"
             
             return response
         except Exception as e:
@@ -102,8 +103,10 @@ class CustomCORSMiddleware(BaseHTTPMiddleware):
                 response.headers["Access-Control-Allow-Origin"] = origin
             else:
                 response.headers["Access-Control-Allow-Origin"] = "*"
-                
+            
             response.headers["Access-Control-Allow-Credentials"] = "true"
+            response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+            response.headers["Access-Control-Allow-Headers"] = "*"
             response.headers["Content-Type"] = "application/json"
             response.body = b'{"error": "Internal Server Error"}'
             
