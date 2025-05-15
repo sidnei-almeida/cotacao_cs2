@@ -51,21 +51,31 @@ app.add_middleware(
     allow_origins=["*"],  # Permitir todas as origens temporariamente para desenvolvimento
     allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["Content-Type", "Authorization", "X-Requested-With", "expires", "*"],
+    allow_headers=["*"],  # Permitir todos os cabeçalhos para resolver os problemas
     expose_headers=["Content-Type", "Authorization"]
 )
 
 # Middleware personalizado para adicionar cabeçalhos CORS em todas as respostas
 class CORSMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
-        # Processar a requisição
+        # Para requisições OPTIONS (preflight), responder imediatamente com os cabeçalhos CORS
+        if request.method == "OPTIONS":
+            response = Response()
+            response.headers["Access-Control-Allow-Origin"] = "*"
+            response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+            response.headers["Access-Control-Allow-Headers"] = "*"
+            response.headers["Access-Control-Allow-Credentials"] = "true"
+            response.headers["Access-Control-Max-Age"] = "86400"  # Cache preflight por 24h
+            return response
+            
+        # Processar a requisição normal
         response = await call_next(request)
         
         # Adicionar cabeçalhos CORS a todas as respostas
         response.headers["Access-Control-Allow-Origin"] = "*"
         response.headers["Access-Control-Allow-Credentials"] = "true"
         response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
-        response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Requested-With, expires"
+        response.headers["Access-Control-Allow-Headers"] = "*"
         
         return response
 
