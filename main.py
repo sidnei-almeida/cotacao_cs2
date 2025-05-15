@@ -29,7 +29,7 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token", auto_error=False)
 app = FastAPI(
     title="CS2 Valuation API",
     description="API para avaliação de inventários, distinguindo entre Unidades de Armazenamento e itens do mercado",
-    version="0.4.0"  # Atualizada para versão com organização por origem dos itens
+    version="0.5.0"  # Atualizada para versão com organização por origem dos itens
 )
 
 # Configurar CORS
@@ -42,58 +42,75 @@ ALLOWED_ORIGINS = [
     "http://127.0.0.1",        # Qualquer porta em localhost
     "https://elite-skins-2025.github.io",  # GitHub Pages
     "file://",  # Para suportar arquivos abertos localmente
-    "https://*.railway.app",   # Para o Railway
+    "https://cotacao-cs2.up.railway.app",  # Railway
+    "https://cotacaocs2-production.up.railway.app",  # Railway produção
     "*"  # Último recurso - permitir qualquer origem em desenvolvimento
 ]
 
+# Configurar middleware CORS com opções específicas
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,  # Usar a lista de origens permitidas em vez de "*"
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],  # Permitir todos os cabeçalhos para resolver os problemas
-    expose_headers=["Content-Type", "Authorization"]
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["*"],
+    max_age=86400  # Cache preflight por 24h
 )
 
 # Middleware personalizado para adicionar cabeçalhos CORS em todas as respostas
-class CORSMiddleware(BaseHTTPMiddleware):
+# Isso garante que mesmo em caso de erro 500/502, os cabeçalhos CORS estarão presentes
+class CustomCORSMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         # Obter a origem da requisição
-        origin = request.headers.get("origin", "*")
+        origin = request.headers.get("origin")
         
-        # Para requisições OPTIONS (preflight), responder imediatamente com os cabeçalhos CORS
+        # Para requisições OPTIONS (preflight), responder imediatamente
         if request.method == "OPTIONS":
             response = Response()
-            # Se a origem for permitida, retorná-la em vez de "*"
-            if origin in ALLOWED_ORIGINS or "*" in ALLOWED_ORIGINS:
+            if origin and (origin in ALLOWED_ORIGINS or "*" in ALLOWED_ORIGINS):
                 response.headers["Access-Control-Allow-Origin"] = origin
             else:
+                # Se não houver origem ou não for permitida, usar wildcard
                 response.headers["Access-Control-Allow-Origin"] = "*"
                 
             response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
             response.headers["Access-Control-Allow-Headers"] = "*"
             response.headers["Access-Control-Allow-Credentials"] = "true"
-            response.headers["Access-Control-Max-Age"] = "86400"  # Cache preflight por 24h
+            response.headers["Access-Control-Max-Age"] = "86400"
             return response
             
-        # Processar a requisição normal
-        response = await call_next(request)
-        
-        # Adicionar cabeçalhos CORS a todas as respostas
-        # Se a origem for permitida, retorná-la em vez de "*"
-        if origin in ALLOWED_ORIGINS or "*" in ALLOWED_ORIGINS:
-            response.headers["Access-Control-Allow-Origin"] = origin
-        else:
-            response.headers["Access-Control-Allow-Origin"] = "*"
+        try:
+            # Processar a requisição normalmente
+            response = await call_next(request)
             
-        response.headers["Access-Control-Allow-Credentials"] = "true"
-        response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
-        response.headers["Access-Control-Allow-Headers"] = "*"
-        
-        return response
+            # Adicionar cabeçalhos CORS na resposta
+            if origin and (origin in ALLOWED_ORIGINS or "*" in ALLOWED_ORIGINS):
+                response.headers["Access-Control-Allow-Origin"] = origin
+            else:
+                response.headers["Access-Control-Allow-Origin"] = "*"
+                
+            response.headers["Access-Control-Allow-Credentials"] = "true"
+            response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+            
+            return response
+        except Exception as e:
+            # Em caso de erro, garantir que a resposta ainda tenha os cabeçalhos CORS
+            print(f"Erro no middleware: {e}")
+            response = Response(status_code=500)
+            
+            if origin and (origin in ALLOWED_ORIGINS or "*" in ALLOWED_ORIGINS):
+                response.headers["Access-Control-Allow-Origin"] = origin
+            else:
+                response.headers["Access-Control-Allow-Origin"] = "*"
+                
+            response.headers["Access-Control-Allow-Credentials"] = "true"
+            response.headers["Content-Type"] = "application/json"
+            response.body = b'{"error": "Internal Server Error"}'
+            
+            return response
 
-# Adicionar o middleware personalizado
-app.add_middleware(CORSMiddleware)
+# Adicionar o middleware personalizado após o middleware do FastAPI
+app.add_middleware(CustomCORSMiddleware)
 
 # Lista de endpoints para a página inicial
 AVAILABLE_ENDPOINTS = [
@@ -838,6 +855,28 @@ async def startup_event():
         import traceback
         traceback.print_exc()
         print("=== ATENÇÃO: API INICIADA COM ERROS ===")
+
+
+@app.get("/healthcheck")
+async def healthcheck(response: Response, request: Request = None):
+    """Endpoint simples para verificar se a API está respondendo"""
+    # Adicionar headers CORS manualmente para garantir que eles estejam presentes
+    origin = request.headers.get("origin", "*")
+    if origin in ALLOWED_ORIGINS or "*" in ALLOWED_ORIGINS:
+        response.headers["Access-Control-Allow-Origin"] = origin
+    else:
+        response.headers["Access-Control-Allow-Origin"] = "*"
+    
+    response.headers["Access-Control-Allow-Credentials"] = "true"
+    response.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "*"
+    
+    return {
+        "status": "ok",
+        "timestamp": datetime.datetime.now().isoformat(),
+        "environment": os.environ.get("RAILWAY_ENVIRONMENT_NAME", "development"),
+        "allowed_origins": ALLOWED_ORIGINS
+    }
 
 
 if __name__ == "__main__":
