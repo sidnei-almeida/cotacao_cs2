@@ -714,7 +714,7 @@ async def my_inventory_full(current_user: dict = Depends(get_current_user), resp
 async def cors_test(response: Response):
     """Endpoint simples para testar cabeçalhos CORS"""
     # Adicionar cabeçalhos CORS manualmente
-    response.headers["Access-Control-Allow-Origin"] = "http://localhost:5500"
+    response.headers["Access-Control-Allow-Origin"] = "*"
     response.headers["Access-Control-Allow-Credentials"] = "true"
     response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
     response.headers["Access-Control-Allow-Headers"] = "*"
@@ -723,7 +723,7 @@ async def cors_test(response: Response):
         "cors_status": "OK",
         "message": "Se você conseguir ver esta mensagem, os cabeçalhos CORS estão funcionando corretamente",
         "timestamp": str(datetime.datetime.now()),
-        "origin": "http://localhost:5500"
+        "requested_headers": "Todos os cabeçalhos são permitidos"
     }
 
 
