@@ -7,4 +7,12 @@ startCommand = "gunicorn -k uvicorn.workers.UvicornWorker -w 4 --timeout 120 --k
 healthcheckPath = "/api/status"
 healthcheckTimeout = 300
 restartPolicyType = "ON_FAILURE"
-restartPolicyMaxRetries = 5 
+restartPolicyMaxRetries = 5
+
+[envs]
+DATABASE_URL = "postgresql://postgres:nGFueZUdBGYipIfpFrxicixchLSgsShM@postgres.railway.internal:5432/railway"
+DB_HOST = "postgres.railway.internal"
+DB_PORT = "5432"
+DB_NAME = "railway"
+DB_USER = "postgres"
+DB_PASSWORD = "nGFueZUdBGYipIfpFrxicixchLSgsShM" 

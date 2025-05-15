@@ -6,21 +6,33 @@ import psycopg2
 from psycopg2.extras import RealDictCursor, execute_values
 import urllib.parse
 import socket
+import json
+import threading
 
-# URL de conexão com o PostgreSQL
-DATABASE_URL = os.environ.get('DATABASE_URL', 'postgresql://postgres:apuculacata@db.ykaatdxdvkcuryswejkm.supabase.co:5432/postgres')
+# URL de conexão com o PostgreSQL no Railway
+DATABASE_URL = os.environ.get('DATABASE_URL', 'postgresql://postgres:nGFueZUdBGYipIfpFrxicixchLSgsShM@postgres.railway.internal:5432/railway')
 
 # Componentes separados como fallback
-DB_HOST = os.environ.get('DB_HOST', 'db.ykaatdxdvkcuryswejkm.supabase.co')
+DB_HOST = os.environ.get('DB_HOST', 'postgres.railway.internal')
 DB_PORT = os.environ.get('DB_PORT', '5432')
-DB_NAME = os.environ.get('DB_NAME', 'postgres')
+DB_NAME = os.environ.get('DB_NAME', 'railway')
 DB_USER = os.environ.get('DB_USER', 'postgres')
-DB_PASSWORD = os.environ.get('DB_PASSWORD', 'apuculacata')
+DB_PASSWORD = os.environ.get('DB_PASSWORD', 'nGFueZUdBGYipIfpFrxicixchLSgsShM')
+
+# Cache em memória para modo de fallback
+in_memory_db = {
+    'skin_prices': {},
+    'metadata': {}
+}
+db_lock = threading.Lock()
+DB_AVAILABLE = False  # Flag para indicar se o banco de dados está disponível
 
 def get_db_connection():
     """Cria uma conexão com o banco de dados PostgreSQL."""
+    global DB_AVAILABLE
+    
     # Lista de modos SSL para tentar, em ordem de preferência
-    ssl_modes = ['prefer', 'require', 'verify-ca', 'verify-full']
+    ssl_modes = ['require', 'prefer', 'verify-ca', 'verify-full']
     last_error = None
     
     # Verificação prévia do DNS para ajudar no diagnóstico
@@ -30,6 +42,12 @@ def get_db_connection():
         print(f"Endereço IP resolvido: {ip_address}")
     except Exception as e:
         print(f"Erro ao resolver DNS: {e}")
+    
+    # Se DATABASE_URL começa com postgres://, mudar para postgresql:// (compatibilidade Railway)
+    connection_url = DATABASE_URL
+    if connection_url.startswith('postgres://'):
+        connection_url = connection_url.replace('postgres://', 'postgresql://', 1)
+        print(f"URL de conexão corrigida para compatibilidade: {connection_url}")
     
     # 1. Primeira tentativa: usar a URL completa
     for ssl_mode in ssl_modes:
@@ -44,8 +62,9 @@ def get_db_connection():
             }
             
             print(f"Tentando conectar ao PostgreSQL com URL completa e sslmode={ssl_mode}")
-            conn = psycopg2.connect(DATABASE_URL, **connection_params)
+            conn = psycopg2.connect(connection_url, **connection_params)
             print(f"Conexão bem-sucedida com URL completa e sslmode={ssl_mode}")
+            DB_AVAILABLE = True
             return conn
         except Exception as e:
             print(f"Erro ao conectar com URL completa e sslmode={ssl_mode}: {str(e)}")
@@ -70,87 +89,89 @@ def get_db_connection():
             print(f"Tentando conectar ao PostgreSQL com parâmetros separados e sslmode={ssl_mode}")
             conn = psycopg2.connect(**connect_params)
             print(f"Conexão bem-sucedida com parâmetros separados e sslmode={ssl_mode}")
+            DB_AVAILABLE = True
             return conn
         except Exception as e:
             print(f"Erro ao conectar com parâmetros separados e sslmode={ssl_mode}: {str(e)}")
             last_error = e
     
-    # 3. Terceira tentativa: Usar a URL por dicionário de parâmetros
+    # 3. Tentativa adicional: Usar conexão pública (para desenvolvimento)
     try:
-        parsed = urllib.parse.urlparse(DATABASE_URL)
-        connect_params = {
-            'host': parsed.hostname,
-            'port': parsed.port or 5432,
-            'dbname': parsed.path[1:],
-            'user': parsed.username,
-            'password': parsed.password,
-            'sslmode': 'prefer',
-            'connect_timeout': 20
-        }
-        
-        print(f"Tentando conectar com URL parseada como dicionário")
-        conn = psycopg2.connect(**connect_params)
-        print(f"Conexão bem-sucedida com URL parseada")
+        public_url = 'postgresql://postgres:nGFueZUdBGYipIfpFrxicixchLSgsShM@gondola.proxy.rlwy.net:10790/railway'
+        print(f"Tentando conectar com URL pública como último recurso")
+        conn = psycopg2.connect(public_url, sslmode='require', connect_timeout=20)
+        print(f"Conexão bem-sucedida com URL pública")
+        DB_AVAILABLE = True
         return conn
     except Exception as e:
-        print(f"Erro ao conectar com URL parseada: {e}")
+        print(f"Erro ao conectar com URL pública: {e}")
     
     # Se chegou aqui, todas as tentativas falharam
     error_msg = f"""
-    Erro de conexão com o banco de dados PostgreSQL:
+    Erro de conexão com o banco de dados PostgreSQL do Railway:
     - Host: {DB_HOST}
     - Porta: {DB_PORT}
     - Banco: {DB_NAME}
     - Usuário: {DB_USER}
     - Erro: {str(last_error)}
     - Sugestões:
-      1. Verifique se o banco de dados está acessível e online
+      1. Verifique se o serviço PostgreSQL no Railway está ativo
       2. Confirme se as credenciais estão corretas
-      3. O Render pode estar bloqueando conexões de saída
-      4. Verifique se o plano do Supabase permite conexões externas
+      3. Verifique se seu serviço tem permissão para acessar o banco de dados
+      
+    ENTRANDO EM MODO DE FALLBACK: Dados serão armazenados em memória temporariamente.
     """
     print(error_msg)
-    raise last_error
+    DB_AVAILABLE = False
+    # Não lançar erro, permitindo que a aplicação continue em modo de fallback
+    return None
 
 def init_db():
     """Inicializa o banco de dados com as tabelas necessárias."""
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    # Tabela para armazenar preços de skins
-    cursor.execute('''
-    CREATE TABLE IF NOT EXISTS skin_prices (
-        id SERIAL PRIMARY KEY,
-        market_hash_name TEXT NOT NULL,
-        price REAL NOT NULL,
-        currency INTEGER NOT NULL,
-        app_id INTEGER NOT NULL,
-        last_updated TIMESTAMP NOT NULL,
-        last_scraped TIMESTAMP NOT NULL,
-        update_count INTEGER DEFAULT 1,
-        UNIQUE(market_hash_name, currency, app_id)
-    )
-    ''')
-    
-    # Tabela para armazenar metadata e configurações
-    cursor.execute('''
-    CREATE TABLE IF NOT EXISTS metadata (
-        key TEXT PRIMARY KEY,
-        value TEXT NOT NULL,
-        updated_at TIMESTAMP NOT NULL
-    )
-    ''')
-    
-    # Índice para buscas rápidas por market_hash_name
-    cursor.execute('''
-    CREATE INDEX IF NOT EXISTS idx_skin_prices_market_hash_name
-    ON skin_prices(market_hash_name)
-    ''')
-    
-    conn.commit()
-    conn.close()
-    
-    print(f"Banco de dados PostgreSQL inicializado")
+    try:
+        conn = get_db_connection()
+        if conn:
+            cursor = conn.cursor()
+            
+            # Tabela para armazenar preços de skins
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS skin_prices (
+                id SERIAL PRIMARY KEY,
+                market_hash_name TEXT NOT NULL,
+                price REAL NOT NULL,
+                currency INTEGER NOT NULL,
+                app_id INTEGER NOT NULL,
+                last_updated TIMESTAMP NOT NULL,
+                last_scraped TIMESTAMP NOT NULL,
+                update_count INTEGER DEFAULT 1,
+                UNIQUE(market_hash_name, currency, app_id)
+            )
+            ''')
+            
+            # Tabela para armazenar metadata e configurações
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS metadata (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                updated_at TIMESTAMP NOT NULL
+            )
+            ''')
+            
+            # Índice para buscas rápidas por market_hash_name
+            cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_skin_prices_market_hash_name
+            ON skin_prices(market_hash_name)
+            ''')
+            
+            conn.commit()
+            conn.close()
+            
+            print(f"Banco de dados PostgreSQL inicializado")
+        else:
+            print("Banco de dados não disponível. Operando em modo de fallback (memória).")
+    except Exception as e:
+        print(f"Erro ao inicializar banco de dados: {e}")
+        print("Operando em modo de fallback (memória).")
 
 def get_skin_price(market_hash_name: str, currency: int, app_id: int) -> Optional[float]:
     """
@@ -164,23 +185,46 @@ def get_skin_price(market_hash_name: str, currency: int, app_id: int) -> Optiona
     Returns:
         Preço da skin ou None se não encontrada ou desatualizada
     """
-    conn = get_db_connection()
-    cursor = conn.cursor(cursor_factory=RealDictCursor)
-    
-    cursor.execute('''
-    SELECT price, last_updated FROM skin_prices
-    WHERE market_hash_name = %s AND currency = %s AND app_id = %s
-    ''', (market_hash_name, currency, app_id))
-    
-    result = cursor.fetchone()
-    conn.close()
-    
-    if result:
-        price, last_updated = result['price'], result['last_updated']
-        # Verificar se o preço está atualizado (< 7 dias)
-        if datetime.now() - last_updated < timedelta(days=7):
-            return price
-    
+    if DB_AVAILABLE:
+        try:
+            conn = get_db_connection()
+            if not conn:
+                # Fallback para cache em memória
+                return _get_price_from_memory(market_hash_name, currency, app_id)
+                
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
+            
+            cursor.execute('''
+            SELECT price, last_updated FROM skin_prices
+            WHERE market_hash_name = %s AND currency = %s AND app_id = %s
+            ''', (market_hash_name, currency, app_id))
+            
+            result = cursor.fetchone()
+            conn.close()
+            
+            if result:
+                price, last_updated = result['price'], result['last_updated']
+                # Verificar se o preço está atualizado (< 7 dias)
+                if datetime.now() - last_updated < timedelta(days=7):
+                    return price
+            
+            return None
+        except Exception as e:
+            print(f"Erro ao obter preço do banco: {e}")
+            # Fallback para cache em memória
+            return _get_price_from_memory(market_hash_name, currency, app_id)
+    else:
+        # Usar cache em memória quando o banco não está disponível
+        return _get_price_from_memory(market_hash_name, currency, app_id)
+
+def _get_price_from_memory(market_hash_name: str, currency: int, app_id: int) -> Optional[float]:
+    """Obtém o preço do cache em memória"""
+    key = f"{market_hash_name}:{currency}:{app_id}"
+    with db_lock:
+        if key in in_memory_db['skin_prices']:
+            item = in_memory_db['skin_prices'][key]
+            if datetime.now() - item['last_updated'] < timedelta(days=7):
+                return item['price']
     return None
 
 def save_skin_price(market_hash_name: str, price: float, currency: int, app_id: int):
@@ -194,34 +238,57 @@ def save_skin_price(market_hash_name: str, price: float, currency: int, app_id: 
         app_id: ID da aplicação na Steam
     """
     now = datetime.now()
-    conn = get_db_connection()
-    cursor = conn.cursor(cursor_factory=RealDictCursor)
     
-    # Verificar se o item já existe
-    cursor.execute('''
-    SELECT id, update_count FROM skin_prices
-    WHERE market_hash_name = %s AND currency = %s AND app_id = %s
-    ''', (market_hash_name, currency, app_id))
+    # Sempre salva no cache em memória
+    key = f"{market_hash_name}:{currency}:{app_id}"
+    with db_lock:
+        in_memory_db['skin_prices'][key] = {
+            'market_hash_name': market_hash_name,
+            'price': price,
+            'currency': currency,
+            'app_id': app_id,
+            'last_updated': now,
+            'last_scraped': now,
+            'update_count': 1
+        }
     
-    result = cursor.fetchone()
-    
-    if result:
-        # Atualizar item existente
-        cursor.execute('''
-        UPDATE skin_prices
-        SET price = %s, last_updated = %s, update_count = update_count + 1
-        WHERE id = %s
-        ''', (price, now, result['id']))
-    else:
-        # Inserir novo item
-        cursor.execute('''
-        INSERT INTO skin_prices 
-        (market_hash_name, price, currency, app_id, last_updated, last_scraped, update_count)
-        VALUES (%s, %s, %s, %s, %s, %s, 1)
-        ''', (market_hash_name, price, currency, app_id, now, now))
-    
-    conn.commit()
-    conn.close()
+    # Se o banco estiver disponível, tenta salvar nele também
+    if DB_AVAILABLE:
+        try:
+            conn = get_db_connection()
+            if not conn:
+                return
+                
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
+            
+            # Verificar se o item já existe
+            cursor.execute('''
+            SELECT id, update_count FROM skin_prices
+            WHERE market_hash_name = %s AND currency = %s AND app_id = %s
+            ''', (market_hash_name, currency, app_id))
+            
+            result = cursor.fetchone()
+            
+            if result:
+                # Atualizar item existente
+                cursor.execute('''
+                UPDATE skin_prices
+                SET price = %s, last_updated = %s, update_count = update_count + 1
+                WHERE id = %s
+                ''', (price, now, result['id']))
+            else:
+                # Inserir novo item
+                cursor.execute('''
+                INSERT INTO skin_prices 
+                (market_hash_name, price, currency, app_id, last_updated, last_scraped, update_count)
+                VALUES (%s, %s, %s, %s, %s, %s, 1)
+                ''', (market_hash_name, price, currency, app_id, now, now))
+            
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            print(f"Erro ao salvar preço no banco de dados: {e}")
+            # Já está no cache em memória, então só registramos o erro
 
 def get_outdated_skins(days: int = 7, limit: int = 100) -> List[Dict]:
     """
@@ -234,22 +301,46 @@ def get_outdated_skins(days: int = 7, limit: int = 100) -> List[Dict]:
     Returns:
         Lista de dicionários com informações das skins desatualizadas
     """
+    if DB_AVAILABLE:
+        try:
+            outdated_date = datetime.now() - timedelta(days=days)
+            conn = get_db_connection()
+            if not conn:
+                return _get_outdated_from_memory(days, limit)
+                
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
+            
+            cursor.execute('''
+            SELECT market_hash_name, price, currency, app_id, last_updated
+            FROM skin_prices
+            WHERE last_updated < %s
+            ORDER BY last_updated ASC
+            LIMIT %s
+            ''', (outdated_date, limit))
+            
+            results = cursor.fetchall()
+            conn.close()
+            
+            return list(results)
+        except Exception as e:
+            print(f"Erro ao obter skins desatualizadas do banco: {e}")
+            return _get_outdated_from_memory(days, limit)
+    else:
+        return _get_outdated_from_memory(days, limit)
+
+def _get_outdated_from_memory(days: int = 7, limit: int = 100) -> List[Dict]:
+    """Obtém skins desatualizadas do cache em memória"""
     outdated_date = datetime.now() - timedelta(days=days)
-    conn = get_db_connection()
-    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    results = []
     
-    cursor.execute('''
-    SELECT market_hash_name, price, currency, app_id, last_updated
-    FROM skin_prices
-    WHERE last_updated < %s
-    ORDER BY last_updated ASC
-    LIMIT %s
-    ''', (outdated_date, limit))
+    with db_lock:
+        for key, item in in_memory_db['skin_prices'].items():
+            if item['last_updated'] < outdated_date:
+                results.append(item)
+                if len(results) >= limit:
+                    break
     
-    results = cursor.fetchall()
-    conn.close()
-    
-    return list(results)
+    return results
 
 def update_last_scrape_time(market_hash_name: str, currency: int, app_id: int):
     """
@@ -261,17 +352,32 @@ def update_last_scrape_time(market_hash_name: str, currency: int, app_id: int):
         app_id: ID da aplicação na Steam
     """
     now = datetime.now()
-    conn = get_db_connection()
-    cursor = conn.cursor()
     
-    cursor.execute('''
-    UPDATE skin_prices
-    SET last_scraped = %s
-    WHERE market_hash_name = %s AND currency = %s AND app_id = %s
-    ''', (now, market_hash_name, currency, app_id))
+    # Atualizar no cache em memória
+    key = f"{market_hash_name}:{currency}:{app_id}"
+    with db_lock:
+        if key in in_memory_db['skin_prices']:
+            in_memory_db['skin_prices'][key]['last_scraped'] = now
     
-    conn.commit()
-    conn.close()
+    # Se o banco estiver disponível, tenta atualizar nele também
+    if DB_AVAILABLE:
+        try:
+            conn = get_db_connection()
+            if not conn:
+                return
+                
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+            UPDATE skin_prices
+            SET last_scraped = %s
+            WHERE market_hash_name = %s AND currency = %s AND app_id = %s
+            ''', (now, market_hash_name, currency, app_id))
+            
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            print(f"Erro ao atualizar tempo de scraping no banco: {e}")
 
 def set_metadata(key: str, value: str):
     """
@@ -282,19 +388,35 @@ def set_metadata(key: str, value: str):
         value: Valor a ser armazenado
     """
     now = datetime.now()
-    conn = get_db_connection()
-    cursor = conn.cursor()
     
-    cursor.execute('''
-    INSERT INTO metadata (key, value, updated_at)
-    VALUES (%s, %s, %s)
-    ON CONFLICT (key) DO UPDATE SET
-        value = EXCLUDED.value,
-        updated_at = EXCLUDED.updated_at
-    ''', (key, value, now))
+    # Salvar no cache em memória
+    with db_lock:
+        in_memory_db['metadata'][key] = {
+            'value': value,
+            'updated_at': now
+        }
     
-    conn.commit()
-    conn.close()
+    # Se o banco estiver disponível, tenta salvar nele também
+    if DB_AVAILABLE:
+        try:
+            conn = get_db_connection()
+            if not conn:
+                return
+                
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+            INSERT INTO metadata (key, value, updated_at)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (key) DO UPDATE SET
+                value = EXCLUDED.value,
+                updated_at = EXCLUDED.updated_at
+            ''', (key, value, now))
+            
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            print(f"Erro ao salvar metadata no banco: {e}")
 
 def get_metadata(key: str, default: str = None) -> str:
     """
@@ -307,14 +429,36 @@ def get_metadata(key: str, default: str = None) -> str:
     Returns:
         Valor do metadado ou o valor padrão
     """
-    conn = get_db_connection()
-    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    # Verificar primeiro no cache em memória
+    with db_lock:
+        if key in in_memory_db['metadata']:
+            return in_memory_db['metadata'][key]['value']
     
-    cursor.execute('SELECT value FROM metadata WHERE key = %s', (key,))
-    result = cursor.fetchone()
-    conn.close()
-    
-    return result['value'] if result else default
+    # Se não encontrou em memória e o banco está disponível, tenta buscar nele
+    if DB_AVAILABLE:
+        try:
+            conn = get_db_connection()
+            if not conn:
+                return default
+                
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
+            
+            cursor.execute('SELECT value FROM metadata WHERE key = %s', (key,))
+            result = cursor.fetchone()
+            conn.close()
+            
+            if result:
+                # Atualizar o cache em memória
+                with db_lock:
+                    in_memory_db['metadata'][key] = {
+                        'value': result['value'],
+                        'updated_at': datetime.now()
+                    }
+                return result['value']
+        except Exception as e:
+            print(f"Erro ao obter metadata do banco: {e}")
+            
+    return default
 
 def get_stats() -> Dict:
     """
@@ -323,32 +467,66 @@ def get_stats() -> Dict:
     Returns:
         Dicionário com estatísticas
     """
-    conn = get_db_connection()
-    cursor = conn.cursor(cursor_factory=RealDictCursor)
-    
-    # Total de skins
-    cursor.execute('SELECT COUNT(*) as total FROM skin_prices')
-    total = cursor.fetchone()['total']
-    
-    # Preço médio
-    cursor.execute('SELECT AVG(price) as avg_price FROM skin_prices')
-    avg_price = cursor.fetchone()['avg_price']
-    
-    # Skins atualizadas recentemente (7 dias)
-    recent_date = datetime.now() - timedelta(days=7)
-    cursor.execute('SELECT COUNT(*) as recent FROM skin_prices WHERE last_updated > %s', (recent_date,))
-    recent = cursor.fetchone()['recent']
-    
-    # Última atualização
-    cursor.execute('SELECT MAX(last_updated) as last_update FROM skin_prices')
-    last_update = cursor.fetchone()['last_update']
-    
-    conn.close()
-    
-    return {
-        'total_skins': total,
-        'average_price': round(avg_price, 2) if avg_price else 0,
-        'recently_updated': recent,
-        'last_update': last_update.isoformat() if last_update else None,
-        'database_type': 'PostgreSQL'
-    } 
+    if DB_AVAILABLE:
+        try:
+            conn = get_db_connection()
+            if not conn:
+                return _get_stats_from_memory()
+                
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
+            
+            # Total de skins
+            cursor.execute('SELECT COUNT(*) as total FROM skin_prices')
+            total = cursor.fetchone()['total']
+            
+            # Preço médio
+            cursor.execute('SELECT AVG(price) as avg_price FROM skin_prices')
+            avg_price = cursor.fetchone()['avg_price']
+            
+            # Skins atualizadas recentemente (7 dias)
+            recent_date = datetime.now() - timedelta(days=7)
+            cursor.execute('SELECT COUNT(*) as recent FROM skin_prices WHERE last_updated > %s', (recent_date,))
+            recent = cursor.fetchone()['recent']
+            
+            # Última atualização
+            cursor.execute('SELECT MAX(last_updated) as last_update FROM skin_prices')
+            last_update = cursor.fetchone()['last_update']
+            
+            conn.close()
+            
+            return {
+                'total_skins': total,
+                'average_price': round(avg_price, 2) if avg_price else 0,
+                'recently_updated': recent,
+                'last_update': last_update.isoformat() if last_update else None,
+                'database_type': 'PostgreSQL',
+                'mode': 'DB'
+            }
+        except Exception as e:
+            print(f"Erro ao obter estatísticas do banco: {e}")
+            return _get_stats_from_memory()
+    else:
+        return _get_stats_from_memory()
+
+def _get_stats_from_memory() -> Dict:
+    """Retorna estatísticas baseadas no cache em memória"""
+    with db_lock:
+        prices = list(item['price'] for item in in_memory_db['skin_prices'].values())
+        total = len(in_memory_db['skin_prices'])
+        avg_price = sum(prices) / total if total > 0 else 0
+        
+        # Skins atualizadas recentemente (7 dias)
+        recent_date = datetime.now() - timedelta(days=7)
+        recent = sum(1 for item in in_memory_db['skin_prices'].values() if item['last_updated'] > recent_date)
+        
+        # Última atualização
+        last_update = max([item['last_updated'] for item in in_memory_db['skin_prices'].values()]) if total > 0 else None
+        
+        return {
+            'total_skins': total,
+            'average_price': round(avg_price, 2),
+            'recently_updated': recent,
+            'last_update': last_update.isoformat() if last_update else None,
+            'database_type': 'Memory',
+            'mode': 'FALLBACK'
+        } 
