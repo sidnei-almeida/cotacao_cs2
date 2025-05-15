@@ -162,7 +162,16 @@ async def root():
 @app.get("/inventory/{steamid}")
 async def inventory(steamid: str, response: Response, request: Request = None):
     """Retorna os itens e preços estimados do inventário público, diferenciando entre Unidades de Armazenamento e itens do mercado"""
-    # CORS agora é tratado pelo middleware global
+    # Adicionar cabeçalhos CORS manualmente para garantir que estarão presentes mesmo em caso de erro
+    origin = request.headers.get("origin", "*") if request else "*"
+    if origin and (origin in ALLOWED_ORIGINS or "*" in ALLOWED_ORIGINS):
+        response.headers["Access-Control-Allow-Origin"] = origin
+    else:
+        response.headers["Access-Control-Allow-Origin"] = "*"
+    
+    response.headers["Access-Control-Allow-Credentials"] = "true"
+    response.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "*"
     
     try:
         print(f"Iniciando análise de inventário para {steamid}")
@@ -221,7 +230,9 @@ async def inventory(steamid: str, response: Response, request: Request = None):
         print(f"Erro ao processar inventário: {e}")
         import traceback
         traceback.print_exc()
+        
         # Retornar um objeto com informação de erro que o frontend pode interpretar
+        # Os cabeçalhos CORS já foram configurados acima, então devem ser enviados mesmo com erro
         return {
             "steamid": steamid,
             "error": str(e),
@@ -341,7 +352,16 @@ async def case(case_name: str, response: Response, request: Request = None):
 @app.get("/price/{market_hash_name}")
 async def price(market_hash_name: str, response: Response, request: Request = None):
     """Retorna o preço de um item pelo seu market_hash_name"""
-    # CORS tratado pelo middleware global
+    # Adicionar cabeçalhos CORS manualmente para garantir que estarão presentes mesmo em caso de erro
+    origin = request.headers.get("origin", "*") if request else "*"
+    if origin and (origin in ALLOWED_ORIGINS or "*" in ALLOWED_ORIGINS):
+        response.headers["Access-Control-Allow-Origin"] = origin
+    else:
+        response.headers["Access-Control-Allow-Origin"] = "*"
+    
+    response.headers["Access-Control-Allow-Credentials"] = "true"
+    response.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "*"
     
     try:
         item_price = get_item_price(market_hash_name)
@@ -353,7 +373,16 @@ async def price(market_hash_name: str, response: Response, request: Request = No
 @app.get("/cases")
 async def cases(response: Response, request: Request = None):
     """Retorna a lista de caixas disponíveis"""
-    # CORS tratado pelo middleware global
+    # Adicionar cabeçalhos CORS manualmente para garantir que estarão presentes mesmo em caso de erro
+    origin = request.headers.get("origin", "*") if request else "*"
+    if origin and (origin in ALLOWED_ORIGINS or "*" in ALLOWED_ORIGINS):
+        response.headers["Access-Control-Allow-Origin"] = origin
+    else:
+        response.headers["Access-Control-Allow-Origin"] = "*"
+    
+    response.headers["Access-Control-Allow-Credentials"] = "true"
+    response.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "*"
     
     try:
         cases_list = list_cases()
