@@ -77,6 +77,39 @@ def sleep_between_requests(min_delay=STEAM_REQUEST_DELAY):
     last_request_time = time.time()
 
 
+def convert_currency(price: float, from_currency: str, to_currency: str = 'BRL') -> float:
+    """
+    Converte um preço de uma moeda para outra.
+    Atualmente suporta apenas conversão de USD para BRL.
+    
+    Args:
+        price: Preço a ser convertido
+        from_currency: Moeda de origem ('USD', 'EUR', etc.)
+        to_currency: Moeda de destino (padrão: 'BRL')
+        
+    Returns:
+        Preço convertido
+    """
+    if from_currency == to_currency:
+        return price
+    
+    # Taxas de conversão (atualizadas em 21/06/2024)
+    conversion_rates = {
+        'USD_to_BRL': 5.47,  # 1 USD = 5.47 BRL
+        'EUR_to_BRL': 5.85,  # 1 EUR = 5.85 BRL
+    }
+    
+    conversion_key = f"{from_currency}_to_{to_currency}"
+    if conversion_key in conversion_rates:
+        converted_price = price * conversion_rates[conversion_key]
+        print(f"Convertendo {price:.2f} {from_currency} para {converted_price:.2f} {to_currency}")
+        return converted_price
+    
+    # Se não encontrar taxa de conversão, retornar preço original
+    print(f"AVISO: Não foi possível converter de {from_currency} para {to_currency}")
+    return price
+
+
 def extract_price_from_text(price_text: str, currency_code: int = STEAM_MARKET_CURRENCY) -> Optional[float]:
     """
     Extrai o valor numérico de um texto de preço.
@@ -95,6 +128,18 @@ def extract_price_from_text(price_text: str, currency_code: int = STEAM_MARKET_C
     price_text = price_text.strip()
     
     try:
+        # Detectar a moeda do texto
+        original_currency = 'BRL'  # Padrão
+        
+        # Verificação de moeda baseada no símbolo
+        if '$' in price_text and 'R$' not in price_text:
+            original_currency = 'USD'
+        elif '€' in price_text:
+            original_currency = 'EUR'
+            
+        # Armazenar o símbolo para log
+        currency_symbol = {'BRL': 'R$', 'USD': '$', 'EUR': '€'}.get(original_currency, '')
+        
         # Remover todos os caracteres não-numéricos, exceto ponto e vírgula
         cleaned_text = re.sub(r'[^\d.,]', '', price_text)
         
@@ -107,8 +152,8 @@ def extract_price_from_text(price_text: str, currency_code: int = STEAM_MARKET_C
             else:
                 return None
         
-        # Detectar o formato com base no código da moeda
-        if currency_code in [7, 9, 10, 13, 14, 16, 19, 22, 26, 30, 35, 37, 39]:
+        # Formatação baseada na moeda detectada
+        if original_currency in ['BRL', 'EUR']:
             # Usar vírgula como separador decimal (ex: R$, €)
             cleaned_text = cleaned_text.replace('.', '').replace(',', '.')
         else:
@@ -117,6 +162,10 @@ def extract_price_from_text(price_text: str, currency_code: int = STEAM_MARKET_C
         
         # Converter para float
         price = float(cleaned_text)
+        
+        # Converter para BRL se estiver em outra moeda
+        if original_currency != 'BRL' and currency_code == 7:  # 7 = BRL
+            price = convert_currency(price, original_currency, 'BRL')
         
         # CORREÇÃO: Verificação adicional para valores absurdos
         # Se o valor for extremamente alto para o tipo de item, provavelmente é um erro
@@ -184,6 +233,7 @@ def get_item_price_via_scraping(market_hash_name: str, appid: int = STEAM_APPID,
     url += f"?currency={currency}"
     
     print(f"Obtendo preço via scraping para: {market_hash_name}")
+    print(f"URL de consulta: {url}")
     
     # Aguardar tempo entre requisições
     sleep_between_requests()
@@ -202,8 +252,8 @@ def get_item_price_via_scraping(market_hash_name: str, appid: int = STEAM_APPID,
             # Processar HTML com selectolax
             parser = HTMLParser(response.text)
             
-            # NOVA ABORDAGEM: Buscar o preço mais baixo primeiro
-            lowest_price = None
+            # Armazenar todos os preços encontrados para análise
+            all_prices = []
             
             # 1. Buscar no elemento específico que mostra o preço mais baixo
             price_element = parser.css_first("span.market_listing_price_with_fee")
@@ -211,66 +261,85 @@ def get_item_price_via_scraping(market_hash_name: str, appid: int = STEAM_APPID,
                 price_text = price_element.text().strip()
                 # Verificar se contém o formato de preço correto (símbolo de moeda)
                 if any(symbol in price_text for symbol in ['R$', '$', '€', '¥', '£', 'kr', 'zł', '₽']):
-                    lowest_price = extract_price_from_text(price_text, currency)
-                    if lowest_price:
-                        print(f"Preço mais baixo para {market_hash_name}: {lowest_price} ({price_text})")
+                    price = extract_price_from_text(price_text, currency)
+                    if price and price > 0:
+                        all_prices.append((price, f"Preço principal: {price_text}"))
+                        print(f"Preço principal encontrado: {price} ({price_text})")
             
-            # 2. Se não encontrar, procurar no histograma de vendas recentes
-            if not lowest_price:
-                histogram_element = parser.css_first("div.market_listing_price_listings_block")
-                if histogram_element:
-                    price_spans = histogram_element.css("span.market_listing_price")
-                    for span in price_spans:
-                        price_text = span.text().strip()
-                        # IMPORTANTE: Verificar se é um preço real (contém símbolo de moeda)
-                        # e NÃO é um contador de quantidade (evitar confusão entre preço e quantidade)
+            # 2. Buscar no histograma de vendas recentes
+            histogram_element = parser.css_first("div.market_listing_price_listings_block")
+            if histogram_element:
+                price_spans = histogram_element.css("span.market_listing_price")
+                for span in price_spans:
+                    price_text = span.text().strip()
+                    # Verificar se é um preço real (contém símbolo de moeda)
+                    if any(symbol in price_text for symbol in ['R$', '$', '€', '¥', '£', 'kr', 'zł', '₽']):
+                        price = extract_price_from_text(price_text, currency)
+                        if price and price > 0:
+                            all_prices.append((price, f"Histograma: {price_text}"))
+                            print(f"Preço do histograma: {price} ({price_text})")
+            
+            # 3. Buscar nos dados JavaScript da página
+            script_tags = parser.css("script")
+            for script in script_tags:
+                script_text = script.text()
+                
+                # Procurar padrões diferentes de preço no JavaScript
+                price_patterns = [
+                    r'"lowest_price":"([^"]+)"',
+                    r'"median_price":"([^"]+)"',
+                    r'"sale_price_text":"([^"]+)"'
+                ]
+                
+                for pattern in price_patterns:
+                    price_match = re.search(pattern, script_text)
+                    if price_match:
+                        price_text = price_match.group(1)
+                        # Verificar se é um preço real (contém símbolo de moeda)
                         if any(symbol in price_text for symbol in ['R$', '$', '€', '¥', '£', 'kr', 'zł', '₽']):
                             price = extract_price_from_text(price_text, currency)
-                            if price and (lowest_price is None or price < lowest_price):
-                                lowest_price = price
+                            if price and price > 0:
+                                all_prices.append((price, f"JavaScript: {price_text}"))
+                                print(f"Preço em JavaScript: {price} ({price_text})")
             
-            # 3. Se ainda não encontrar, procurar nos dados de JavaScript da página
-            if not lowest_price:
-                script_tags = parser.css("script")
-                for script in script_tags:
-                    script_text = script.text()
+            # ANÁLISE ESTATÍSTICA: Se encontrou múltiplos preços, tomar uma decisão mais informada
+            if len(all_prices) > 0:
+                # Filtrar preços claramente inválidos (valores extremamente baixos ou altos)
+                valid_prices = [(p, src) for p, src in all_prices if p >= 0.1]  # Mínimo de 0.1 para evitar erros
+                
+                if valid_prices:
+                    # Ordenar por preço
+                    valid_prices.sort(key=lambda x: x[0])
                     
-                    # Procurar padrões diferentes de preço no JavaScript
-                    price_patterns = [
-                        r'"lowest_price":"([^"]+)"',
-                        r'"median_price":"([^"]+)"',
-                        r'"sale_price_text":"([^"]+)"'
-                    ]
+                    # Mostrar todos os preços encontrados para debug
+                    print(f"Todos os preços válidos encontrados para {market_hash_name}:")
+                    for price, source in valid_prices:
+                        print(f"  - {price:.2f} ({source})")
                     
-                    for pattern in price_patterns:
-                        price_match = re.search(pattern, script_text)
-                        if price_match:
-                            price_text = price_match.group(1)
-                            # Verificar se é um preço real (contém símbolo de moeda)
-                            if any(symbol in price_text for symbol in ['R$', '$', '€', '¥', '£', 'kr', 'zł', '₽']):
-                                price = extract_price_from_text(price_text, currency)
-                                if price and (lowest_price is None or price < lowest_price):
-                                    lowest_price = price
-                                    print(f"Preço encontrado via JavaScript: {lowest_price} ({price_text})")
+                    # Se temos mais de um preço, calcular média e mediana
+                    if len(valid_prices) > 1:
+                        prices_only = [p for p, _ in valid_prices]
+                        mean_price = sum(prices_only) / len(prices_only)
+                        median_price = prices_only[len(prices_only) // 2]
+                        lowest_price = prices_only[0]
+                        
+                        print(f"Análise estatística: Mínimo={lowest_price:.2f}, Mediana={median_price:.2f}, Média={mean_price:.2f}")
+                        
+                        # Para ser conservador, usar o menor preço desde que não seja absurdamente baixo
+                        lowest_legitimate_price = lowest_price
+                        if lowest_price < median_price * 0.5 and len(valid_prices) > 2:
+                            # Se o preço mais baixo for menos da metade da mediana, pode ser um outlier
+                            print(f"AVISO: Preço mais baixo ({lowest_price:.2f}) parece ser outlier. Usando mediana ({median_price:.2f})")
+                            lowest_legitimate_price = median_price
+                        
+                        return lowest_legitimate_price
+                    else:
+                        # Se só temos um preço, usar esse
+                        return valid_prices[0][0]
             
-            # 4. IMPORTANTE: Filtrar elementos que são quantidades, não preços!
-            if lowest_price:
-                # Verificar se o valor parece uma quantidade, não um preço:
-                # - Números inteiros maiores que 100 sem centavos
-                # - Números muito redondos (como 100, 200, etc.)
-                if (lowest_price > 100 and lowest_price.is_integer() and
-                    lowest_price % 50 == 0):  # Múltiplos de 50 redondos
-                    print(f"AVISO: Valor {lowest_price} parece ser uma QUANTIDADE, não um PREÇO. Ignorando.")
-                    lowest_price = None
+            # Se não encontrou nenhum preço válido
+            print(f"Não foi possível encontrar preços válidos para {market_hash_name}")
             
-            # Se conseguimos extrair um preço válido, retorná-lo
-            if lowest_price:
-                return lowest_price
-            
-            print(f"Não foi possível encontrar um preço válido para {market_hash_name}")
-            # Salvar o HTML para análise em caso de problemas (ambiente de dev)
-            # with open(f"debug_{encoded_name}.html", "w", encoding="utf-8") as f:
-            #    f.write(response.text)
         else:
             print(f"Erro ao acessar página do mercado: Status {response.status_code}")
     
@@ -297,30 +366,41 @@ def get_item_price_via_scraping(market_hash_name: str, appid: int = STEAM_APPID,
             parser = HTMLParser(response.text)
             
             # Buscar por preços em elementos principais
-            lowest_price = None
-            price_candidates = []
+            all_prices = []
             
             # Verificar diferentes formatos de exibição de preço
             price_containers = parser.css("span.normal_price, span.market_listing_price_with_fee")
             
             for container in price_containers:
                 price_text = container.text().strip()
-                # IMPORTANTE: Verificar se é de fato um preço (contém símbolo de moeda)
+                # Verificar se é de fato um preço (contém símbolo de moeda)
                 if any(symbol in price_text for symbol in ['R$', '$', '€', '¥', '£', 'kr', 'zł', '₽']):
                     price = extract_price_from_text(price_text, currency)
-                    if price:
-                        price_candidates.append((price, price_text))
+                    if price and price > 0:
+                        all_prices.append((price, price_text))
             
-            # Se encontrou candidatos, usar o mais baixo que parece ser um preço real
-            if price_candidates:
+            # Se encontrou candidatos, analisar
+            if all_prices:
                 # Ordenar por preço (menor primeiro)
-                price_candidates.sort(key=lambda x: x[0])
+                all_prices.sort(key=lambda x: x[0])
                 
                 # Filtrar candidatos que parecem ser quantidades
-                valid_prices = [(price, text) for price, text in price_candidates 
-                                if not (price > 100 and price.is_integer() and price % 50 == 0)]
+                valid_prices = [(price, text) for price, text in all_prices 
+                               if not (price > 100 and price.is_integer() and price % 50 == 0)]
                 
                 if valid_prices:
+                    # Se temos múltiplos preços, calcular média e mediana
+                    if len(valid_prices) > 1:
+                        prices_only = [p for p, _ in valid_prices]
+                        median_price = prices_only[len(prices_only) // 2]
+                        lowest_price = prices_only[0]
+                        
+                        # Se o menor preço parece suspeito (muito abaixo da mediana), usar a mediana
+                        if lowest_price < median_price * 0.5 and len(valid_prices) > 2:
+                            print(f"AVISO: Preço mais baixo ({lowest_price:.2f}) parece ser outlier. Usando mediana ({median_price:.2f})")
+                            return median_price
+                    
+                    # Retornar o preço mais baixo (ou único)
                     lowest_price, price_text = valid_prices[0]
                     print(f"Preço mais baixo (segunda tentativa): {lowest_price} ({price_text})")
                     return lowest_price
@@ -328,7 +408,8 @@ def get_item_price_via_scraping(market_hash_name: str, appid: int = STEAM_APPID,
     except Exception as e:
         print(f"Segunda tentativa falhou: {e}")
     
-    return None
+    # Valor fallback mínimo razoável para CS2 (1.0 pode ser um valor muito baixo para quase qualquer item)
+    return 1.5
 
 
 def get_item_price(market_hash_name: str, currency: int = None, appid: int = None) -> float:
