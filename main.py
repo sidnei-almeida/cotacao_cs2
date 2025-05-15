@@ -38,13 +38,12 @@ ALLOWED_ORIGINS = [
     "http://127.0.0.1:5500",   # Desenvolvimento local alternativo
     "https://elite-skins-2025.github.io",  # GitHub Pages
     "file://",  # Para suportar arquivos abertos localmente
-    "https://*.railway.app",   # Para o Railway
-    "*"  # Temporariamente permitir todas as origens para debug
+    "https://*.railway.app"   # Para o Railway
 ]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Temporariamente permitir todas as origens
+    allow_origins=ALLOWED_ORIGINS,  # Usar origens específicas em vez do wildcard
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -59,8 +58,15 @@ def apply_cors_headers(response: Response, request: Request = None):
     if request and request.headers.get("origin"):
         requested_origin = request.headers.get("origin")
         # Verificar se a origem está na lista de permitidas
-        if requested_origin in ALLOWED_ORIGINS:
-            origin = requested_origin
+        for allowed_origin in ALLOWED_ORIGINS:
+            # Suporte para wildcards no padrão (ex: https://*.railway.app)
+            if allowed_origin.endswith("*") and requested_origin.startswith(allowed_origin[:-1]):
+                origin = requested_origin
+                break
+            # Match exato
+            elif requested_origin == allowed_origin:
+                origin = requested_origin
+                break
     
     response.headers["Access-Control-Allow-Origin"] = origin
     response.headers["Access-Control-Allow-Credentials"] = "true"
@@ -657,14 +663,11 @@ async def _complete_inventory_analysis(
 
 # Novos endpoints para o usuário autenticado
 @app.get("/my/inventory")
-async def my_inventory(current_user: dict = Depends(get_current_user), response: Response = None):
+async def my_inventory(current_user: dict = Depends(get_current_user), response: Response = None, request: Request = None):
     """Retorna os itens e preços estimados do inventário do usuário autenticado"""
     # Aplicar cabeçalhos CORS
     if response:
-        response.headers["Access-Control-Allow-Origin"] = "http://localhost:5500"
-        response.headers["Access-Control-Allow-Credentials"] = "true"
-        response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
-        response.headers["Access-Control-Allow-Headers"] = "*"
+        apply_cors_headers(response, request)
         
     try:
         # Verificar se o usuário está autenticado
@@ -684,7 +687,7 @@ async def my_inventory(current_user: dict = Depends(get_current_user), response:
         # Reutiliza a função de inventário existente com o steamid do usuário autenticado
         steamid = current_user["steam_id"]
         print(f"Analisando inventário do usuário autenticado: {steamid}")
-        return await inventory(steamid, response)
+        return await inventory(steamid, response, request)
     except Exception as e:
         print(f"Erro no endpoint /my/inventory: {e}")
         import traceback
@@ -705,7 +708,8 @@ async def my_inventory_complete(
     current_user: dict = Depends(get_current_user),
     session_id: str = Query(None),
     steam_token: str = Query(None),
-    response: Response = None
+    response: Response = None,
+    request: Request = None
 ):
     """
     Retorna análise completa do inventário do usuário autenticado incluindo o conteúdo das
@@ -713,10 +717,7 @@ async def my_inventory_complete(
     """
     # Aplicar cabeçalhos CORS
     if response:
-        response.headers["Access-Control-Allow-Origin"] = "http://localhost:5500"
-        response.headers["Access-Control-Allow-Credentials"] = "true"
-        response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
-        response.headers["Access-Control-Allow-Headers"] = "*"
+        apply_cors_headers(response, request)
         
     try:
         # Verificar se o usuário está autenticado
@@ -766,16 +767,13 @@ async def my_inventory_complete(
 
 
 @app.get("/my/inventory/full")
-async def my_inventory_full(current_user: dict = Depends(get_current_user), response: Response = None):
+async def my_inventory_full(current_user: dict = Depends(get_current_user), response: Response = None, request: Request = None):
     """
     Retorna análise completa do inventário do usuário autenticado por categoria.
     """
     # Aplicar cabeçalhos CORS
     if response:
-        response.headers["Access-Control-Allow-Origin"] = "http://localhost:5500"
-        response.headers["Access-Control-Allow-Credentials"] = "true"
-        response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
-        response.headers["Access-Control-Allow-Headers"] = "*"
+        apply_cors_headers(response, request)
         
     try:
         # Verificar se o usuário está autenticado
@@ -795,7 +793,7 @@ async def my_inventory_full(current_user: dict = Depends(get_current_user), resp
         # Reutiliza a função de inventário detalhado com o steamid do usuário autenticado
         steamid = current_user["steam_id"]
         print(f"Analisando inventário categorizado do usuário autenticado: {steamid}")
-        return await full_inventory_analysis(steamid, response)
+        return await full_inventory_analysis(steamid, response, request)
     except Exception as e:
         print(f"Erro no endpoint /my/inventory/full: {e}")
         import traceback
