@@ -1,7 +1,8 @@
 from fastapi import FastAPI, HTTPException, Query, Request, Depends, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
-from fastapi.security import OAuth2PasswordBearer
+from fastapi.security import OAuth2PasswordBearer, OAuth2
+from fastapi.openapi.models import OAuthFlows as OAuthFlowsModel
 from starlette.middleware.base import BaseHTTPMiddleware
 from typing import List, Dict, Any, Optional
 import uvicorn
@@ -10,6 +11,7 @@ from jwt.exceptions import PyJWTError
 import os
 import datetime
 from urllib.parse import urlencode
+from starlette.status import HTTP_401_UNAUTHORIZED
 
 # Importando serviços e configurações
 from services.steam_inventory import get_inventory_value, get_storage_unit_contents
@@ -23,8 +25,45 @@ from auth.steam_auth import steam_login_url, validate_steam_login, create_jwt_to
 # Importe para o inicializador de banco de dados
 from migrate_railway import init_database
 
-# Configuração de autenticação OAuth2
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token", auto_error=False)
+# Classe personalizada para aceitar token via URL ou header
+class OAuth2PasswordBearerWithCookie(OAuth2):
+    def __init__(self, tokenUrl: str, auto_error: bool = True):
+        flows = OAuthFlowsModel(password={"tokenUrl": tokenUrl, "scopes": {}})
+        super().__init__(flows=flows, scheme_name="Bearer", auto_error=auto_error)
+
+    async def __call__(self, request: Request):
+        # Tenta obter o token via header Authorization primeiro
+        authorization = request.headers.get("Authorization")
+        scheme, param = "", ""
+        
+        if authorization:
+            scheme, param = authorization.split()
+            if scheme.lower() != "bearer":
+                if self.auto_error:
+                    raise HTTPException(
+                        status_code=HTTP_401_UNAUTHORIZED,
+                        detail="Not authenticated",
+                        headers={"WWW-Authenticate": "Bearer"},
+                    )
+                else:
+                    return None
+            return param
+        
+        # Se não encontrar no header, tenta obter via parâmetro URL
+        token = request.query_params.get("token")
+        if token:
+            return token
+            
+        if self.auto_error:
+            raise HTTPException(
+                status_code=HTTP_401_UNAUTHORIZED,
+                detail="Not authenticated",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        return None
+
+# Instanciar o novo esquema OAuth2
+oauth2_scheme = OAuth2PasswordBearerWithCookie(tokenUrl="token", auto_error=False)
 
 app = FastAPI(
     title="CS2 Valuation API",
@@ -684,9 +723,15 @@ async def _complete_inventory_analysis(
 
 # Novos endpoints para o usuário autenticado
 @app.get("/my/inventory")
-async def my_inventory(current_user: dict = Depends(get_current_user), response: Response = None, request: Request = None):
+async def my_inventory(request: Request, current_user: dict = Depends(get_current_user), response: Response = None):
     """Retorna os itens do inventário do usuário autenticado"""
     # CORS tratado pelo middleware global
+    
+    # Tentar obter o token de parâmetro de URL se não estiver nos headers
+    if current_user is None:
+        token_param = request.query_params.get("token")
+        if token_param:
+            current_user = get_current_user(token_param, request)
     
     if not current_user:
         raise HTTPException(status_code=401, detail="Autenticação necessária")
@@ -714,14 +759,20 @@ async def my_inventory(current_user: dict = Depends(get_current_user), response:
 
 @app.get("/my/inventory/complete")
 async def my_inventory_complete(
+    request: Request,
     current_user: dict = Depends(get_current_user),
     session_id: str = Query(None),
     steam_token: str = Query(None),
-    response: Response = None,
-    request: Request = None
+    response: Response = None
 ):
     """Retorna o inventário completo do usuário, incluindo conteúdo das unidades de armazenamento"""
     # CORS tratado pelo middleware global
+    
+    # Tentar obter o token de parâmetro de URL se não estiver nos headers
+    if current_user is None:
+        token_param = request.query_params.get("token")
+        if token_param:
+            current_user = get_current_user(token_param, request)
     
     if not current_user:
         raise HTTPException(status_code=401, detail="Autenticação necessária")
@@ -744,9 +795,15 @@ async def my_inventory_complete(
 
 
 @app.get("/my/inventory/full")
-async def my_inventory_full(current_user: dict = Depends(get_current_user), response: Response = None, request: Request = None):
+async def my_inventory_full(request: Request, current_user: dict = Depends(get_current_user), response: Response = None):
     """Retorna análise completa do inventário do usuário autenticado, com categorias"""
     # CORS tratado pelo middleware global
+    
+    # Tentar obter o token de parâmetro de URL se não estiver nos headers
+    if current_user is None:
+        token_param = request.query_params.get("token")
+        if token_param:
+            current_user = get_current_user(token_param, request)
     
     if not current_user:
         raise HTTPException(status_code=401, detail="Autenticação necessária")
