@@ -202,18 +202,28 @@ async def root():
 
 
 @app.get("/inventory/{steamid}")
-async def inventory(steamid: str, response: Response, request: Request = None):
+async def inventory(steamid: str, response: Response, request: Request = None, cors: bool = Query(False)):
     """Retorna os itens e preços estimados do inventário público, diferenciando entre Unidades de Armazenamento e itens do mercado"""
-    # Adicionar cabeçalhos CORS manualmente para garantir que estarão presentes mesmo em caso de erro
-    origin = request.headers.get("origin", "*") if request else "*"
-    if origin and (origin in ALLOWED_ORIGINS or "*" in ALLOWED_ORIGINS):
-        response.headers["Access-Control-Allow-Origin"] = origin
-    else:
+    # Verificar se o parâmetro cors está presente e definir headers mais diretamente
+    # Isso garante compatibilidade com requisições de navegadores
+    if cors or (request and "cors" in request.query_params):
+        # Para requisições explicitamente marcadas com cors=true, forçar os cabeçalhos
+        print(f"Parâmetro cors detectado para {steamid}. Adicionando cabeçalhos CORS explícitos.")
         response.headers["Access-Control-Allow-Origin"] = "*"
-    
-    response.headers["Access-Control-Allow-Credentials"] = "true"
-    response.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
-    response.headers["Access-Control-Allow-Headers"] = "*"
+        response.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "*"
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+    else:
+        # Adicionar cabeçalhos CORS padrão para outras requisições
+        origin = request.headers.get("origin", "*") if request else "*"
+        if origin and (origin in ALLOWED_ORIGINS or "*" in ALLOWED_ORIGINS):
+            response.headers["Access-Control-Allow-Origin"] = origin
+        else:
+            response.headers["Access-Control-Allow-Origin"] = "*"
+        
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+        response.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "*"
     
     try:
         print(f"Iniciando análise de inventário para {steamid}")
@@ -289,7 +299,16 @@ async def inventory(steamid: str, response: Response, request: Request = None):
 @app.get("/inventory/full/{steamid}")
 async def full_inventory_analysis(steamid: str, response: Response, request: Request = None):
     """Retorna uma análise completa do inventário, categorizada por tipos de itens"""
-    # CORS tratado pelo middleware global
+    # Adicionar cabeçalhos CORS manualmente para garantir que estarão presentes mesmo em caso de erro
+    origin = request.headers.get("origin", "*") if request else "*"
+    if origin and (origin in ALLOWED_ORIGINS or "*" in ALLOWED_ORIGINS):
+        response.headers["Access-Control-Allow-Origin"] = origin
+    else:
+        response.headers["Access-Control-Allow-Origin"] = "*"
+    
+    response.headers["Access-Control-Allow-Credentials"] = "true"
+    response.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "*"
     
     try:
         print(f"Iniciando análise detalhada de inventário para {steamid}")
@@ -383,7 +402,16 @@ async def full_inventory_analysis(steamid: str, response: Response, request: Req
 @app.get("/case/{case_name}")
 async def case(case_name: str, response: Response, request: Request = None):
     """Retorna informações sobre uma caixa específica"""
-    # CORS tratado pelo middleware global
+    # Adicionar cabeçalhos CORS manualmente para garantir que estarão presentes mesmo em caso de erro
+    origin = request.headers.get("origin", "*") if request else "*"
+    if origin and (origin in ALLOWED_ORIGINS or "*" in ALLOWED_ORIGINS):
+        response.headers["Access-Control-Allow-Origin"] = origin
+    else:
+        response.headers["Access-Control-Allow-Origin"] = "*"
+    
+    response.headers["Access-Control-Allow-Credentials"] = "true"
+    response.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "*"
     
     case_info = get_case_details(case_name)
     if not case_info:
@@ -446,7 +474,16 @@ async def cases(response: Response, request: Request = None):
 @app.get("/api/status")
 async def api_status(response: Response, request: Request = None):
     """Retorna informações sobre o status atual da API, útil para monitoramento"""
-    # CORS tratado pelo middleware global
+    # Adicionar cabeçalhos CORS manualmente para garantir que estarão presentes mesmo em caso de erro
+    origin = request.headers.get("origin", "*") if request else "*"
+    if origin and (origin in ALLOWED_ORIGINS or "*" in ALLOWED_ORIGINS):
+        response.headers["Access-Control-Allow-Origin"] = origin
+    else:
+        response.headers["Access-Control-Allow-Origin"] = "*"
+    
+    response.headers["Access-Control-Allow-Credentials"] = "true"
+    response.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "*"
     
     try:
         # Obter status do mercado/API Steam

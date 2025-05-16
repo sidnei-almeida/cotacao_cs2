@@ -80,7 +80,6 @@ def sleep_between_requests(min_delay=STEAM_REQUEST_DELAY):
 def convert_currency(price: float, from_currency: str, to_currency: str = 'BRL') -> float:
     """
     Converte um preço de uma moeda para outra.
-    Atualmente suporta apenas conversão de USD para BRL.
     
     Args:
         price: Preço a ser convertido
@@ -93,7 +92,11 @@ def convert_currency(price: float, from_currency: str, to_currency: str = 'BRL')
     if from_currency == to_currency:
         return price
     
-    # Taxas de conversão (atualizadas em 21/06/2024)
+    # TODO: Implementar um sistema para buscar taxas de câmbio atualizadas de uma API externa
+    # Por enquanto, usando taxas aproximadas que devem ser atualizadas periodicamente
+    
+    # Taxas de conversão - ATUALIZE REGULARMENTE!
+    # Última atualização: 21/06/2024
     conversion_rates = {
         'USD_to_BRL': 5.47,  # 1 USD = 5.47 BRL
         'EUR_to_BRL': 5.85,  # 1 EUR = 5.85 BRL
@@ -103,6 +106,7 @@ def convert_currency(price: float, from_currency: str, to_currency: str = 'BRL')
     if conversion_key in conversion_rates:
         converted_price = price * conversion_rates[conversion_key]
         print(f"Convertendo {price:.2f} {from_currency} para {converted_price:.2f} {to_currency}")
+        print("Aviso: Usando taxa de conversão fixa. Considere atualizar regularmente.")
         return converted_price
     
     # Se não encontrar taxa de conversão, retornar preço original
@@ -170,30 +174,25 @@ def extract_price_from_text(price_text: str, currency_code: int = STEAM_MARKET_C
         # CORREÇÃO: Verificação adicional para valores absurdos
         # Se o valor for extremamente alto para o tipo de item, provavelmente é um erro
         
-        # Definir limites máximos razoáveis para diferentes tipos de itens
+        # Definir limites máximos razoáveis para categorias de itens (em vez de itens específicos)
         max_limits = {
-            "Soldier": 30.0,           # Agentes/Personagens comuns
-            "Mr. Muhlik": 30.0,        # Agentes/Personagens comuns  
-            "Phoenix": 30.0,           # Agentes/Personagens comuns
-            "SAIDAN": 30.0,            # Agentes/Personagens comuns
-            "Sticker": 50.0,           # Maioria dos adesivos comuns
-            "Adesivo": 50.0,           # Maioria dos adesivos comuns
-            "Pistol": 100.0,           # Pistolas comuns
-            "Case": 20.0,              # Caixas comuns
-            "Graffiti": 5.0,           # Grafites comuns
-            "Spray": 5.0,              # Grafites comuns
-            "Dragon Lore": 15000.0,    # AWP Dragon Lore (cara)
-            "Howl": 8000.0,            # M4A4 Howl (cara)
-            "Gungnir": 12000.0,        # AWP Gungnir (cara)
-            "Butterfly": 3500.0,       # Facas Butterfly (caras)
-            "Karambit": 3500.0,        # Facas Karambit (caras)
-            "Gloves": 2500.0           # Luvas (caras)
+            "Agent": 50.0,             # Todos os tipos de agentes/personagens
+            "Sticker": 100.0,          # Categoria geral de adesivos
+            "Adesivo": 100.0,          # Versão em português
+            "Pistol": 150.0,           # Pistolas como categoria
+            "Rifle": 500.0,            # Rifles como categoria
+            "Case": 30.0,              # Caixas como categoria
+            "Caixa": 30.0,             # Versão em português
+            "Graffiti": 10.0,          # Grafites como categoria
+            "Spray": 10.0,             # Versão em português
+            "Knife": 15000.0,          # Facas como categoria
+            "Gloves": 5000.0           # Luvas como categoria
         }
         
         # Verificar se o preço excede o limite para o tipo de item
         for item_type, max_limit in max_limits.items():
-            if item_type in price_text and price > max_limit:
-                print(f"AVISO: Valor extremamente alto detectado: {price} de '{price_text}' para item tipo {item_type}. Ajustando para máximo razoável: {max_limit}")
+            if item_type.lower() in price_text.lower() and price > max_limit:
+                print(f"AVISO: Valor extremamente alto detectado: {price} de '{price_text}' para categoria {item_type}. Ajustando para máximo razoável: {max_limit}")
                 return max_limit
                 
         # Verificação geral para itens não identificados
@@ -235,28 +234,6 @@ def get_item_price_via_scraping(market_hash_name: str, appid: int = STEAM_APPID,
     print(f"DEBUGGING: Obtendo preço para '{market_hash_name}'")
     print(f"DEBUGGING: URL de consulta: {url}")
 
-    # TESTE ESPECÍFICO PARA CZ75-Auto StatTrak
-    if "StatTrak™ CZ75-Auto | Tactical" in market_hash_name:
-        print("DEBUGGING: Item específico CZ75-Auto StatTrak Tactical detectado!")
-        
-        # Valores fixos baseados na imagem fornecida:
-        price_values = [2.37, 1.93, 1.68, 1.46, 5.61]
-        print(f"DEBUGGING: Valores conhecidos do mercado: {price_values}")
-        
-        # Remover o outlier (5.61)
-        without_outlier = [p for p in price_values if p != 5.61]
-        
-        # Calcular a média correta (sem o outlier)
-        correct_mean = sum(without_outlier) / len(without_outlier)
-        
-        # Converter USD para BRL (taxa atual: 5.47)
-        brl_price = correct_mean * 5.47
-        
-        print(f"DEBUGGING: Média sem outlier={correct_mean:.2f} USD, Convertido para BRL={brl_price:.2f}")
-        
-        # Retornar diretamente o valor corrigido e convertido
-        return brl_price
-    
     # Aguardar tempo entre requisições
     sleep_between_requests()
     
@@ -354,7 +331,7 @@ def get_item_price_via_scraping(market_hash_name: str, appid: int = STEAM_APPID,
                     for price, source in valid_prices:
                         print(f"DEBUGGING:   - {price:.2f} ({source})")
                     
-                    # Se temos mais de um preço, calcular média e mediana
+                    # Se temos múltiplos preços, calcular média e mediana
                     if len(valid_prices) > 1:
                         prices_only = [p for p, _ in valid_prices]
                         mean_price = sum(prices_only) / len(prices_only)
@@ -382,16 +359,6 @@ def get_item_price_via_scraping(market_hash_name: str, appid: int = STEAM_APPID,
                                 if i == 0:  # Se for o menor preço
                                     lowest_legitimate_price = median_price
                                     print(f"DEBUGGING:   - Usando mediana {median_price:.2f} em vez do outlier baixo")
-                        
-                        # CORREÇÃO: Para CZ75-Auto, forçar o uso da média sem outliers altos
-                        if "CZ75-Auto" in market_hash_name:
-                            # Identificar e remover outliers altos
-                            non_outliers = [p for p in prices_only if p <= median_price * 1.5]
-                            if non_outliers:
-                                correct_mean = sum(non_outliers) / len(non_outliers)
-                                print(f"DEBUGGING:   - CORREÇÃO CZ75: Média sem outliers altos: {correct_mean:.2f}")
-                                lowest_legitimate_price = correct_mean
-                                
                         
                         # Verificar se o valor está em USD e necessita conversão
                         final_price = lowest_legitimate_price
@@ -470,7 +437,7 @@ def get_item_price_via_scraping(market_hash_name: str, appid: int = STEAM_APPID,
                         median_price = prices_only[len(prices_only) // 2]
                         lowest_price = prices_only[0]
                         
-                        # Se o menor preço parece suspeito (muito abaixo da mediana), usar a mediana
+                        # Verificar se o menor preço parece suspeito (muito abaixo da mediana), usar a mediana
                         if lowest_price < median_price * 0.5 and len(valid_prices) > 2:
                             print(f"DEBUGGING: Segunda tentativa - preço mais baixo ({lowest_price:.2f}) é outlier. Usando mediana ({median_price:.2f})")
                             return median_price
@@ -482,17 +449,6 @@ def get_item_price_via_scraping(market_hash_name: str, appid: int = STEAM_APPID,
         
     except Exception as e:
         print(f"DEBUGGING: Segunda tentativa falhou: {e}")
-    
-    # CORREÇÃO ESPECÍFICA PARA CZ75-Auto
-    if "CZ75-Auto" in market_hash_name:
-        print("DEBUGGING: CORREÇÃO FINAL para CZ75-Auto - usando valor fixo baseado na imagem")
-        # Valores médios calculados a partir da imagem mostrada
-        # (2.37 + 1.93 + 1.68 + 1.46) / 4 ≈ 1.86
-        usd_price = 1.86
-        # Converter para BRL (taxa: 5.47)
-        brl_price = usd_price * 5.47
-        print(f"DEBUGGING: Preço corrigido CZ75: {usd_price:.2f} USD = {brl_price:.2f} BRL")
-        return brl_price
     
     # Valor fallback mínimo razoável para CS2
     print("DEBUGGING: Nenhum preço encontrado, usando fallback")
@@ -556,15 +512,17 @@ def get_item_price(market_hash_name: str, currency: int = None, appid: int = Non
             return price
     except Exception as e:
         print(f"Erro ao fazer scraping para {market_hash_name}: {e}")
-        price = 1.0  # Preço fallback mínimo
     
-    # Garantir um preço mínimo sensível para itens não encontrados
-    price = max(price, 1.0)
+    # Se chegou aqui, o scraping falhou ou retornou preço zero
+    # Definimos um preço padrão baixo em vez de estimar com base em características
+    default_price = 1.0  # Preço fallback mínimo
+    
+    print(f"Scraping falhou para {market_hash_name}. Usando preço padrão de R$ {default_price}")
     
     # Armazenar no cache e no banco e retornar
-    price_cache[cache_key] = price
-    save_skin_price(market_hash_name, price, currency, appid)  # Salvar no banco
-    return price
+    price_cache[cache_key] = default_price
+    save_skin_price(market_hash_name, default_price, currency, appid)  # Salvar no banco
+    return default_price
 
 
 def classify_item_and_get_price_limit(market_hash_name: str) -> tuple:
@@ -657,72 +615,6 @@ def classify_item_and_get_price_limit(market_hash_name: str) -> tuple:
     
     # Padrão: categoria desconhecida com limite conservador
     return "unknown", 50.0
-
-
-def estimate_price_from_characteristics(market_hash_name: str) -> float:
-    """
-    Estima um preço para um item com base em suas características (nome, qualidade, etc.)
-    
-    Args:
-        market_hash_name: Nome do item no formato do mercado
-        
-    Returns:
-        Preço estimado
-    """
-    price = 0.0
-    market_hash_name_lower = market_hash_name.lower()
-    
-    # Facas e luvas (itens especiais)
-    if "★" in market_hash_name:
-        if "gloves" in market_hash_name_lower or "hand wraps" in market_hash_name_lower:
-            price = 800.0
-        else:  # Facas
-            price = 550.0
-    
-    # StatTrak
-    if "stattrak™" in market_hash_name_lower:
-        price += 50.0
-    
-    # AWP (Sniper rifle popular)
-    if "awp" in market_hash_name_lower:
-        price = max(price, 30.0)
-    
-    # Rifles populares
-    if any(rifle in market_hash_name_lower for rifle in ["ak-47", "m4a4", "m4a1-s"]):
-        price = max(price, 20.0)
-    
-    # Tipo de arma comum
-    if any(weapon in market_hash_name_lower for weapon in [
-        "deagle", "desert eagle", "usp-s", "glock", "p250", "p90", "mp5", "mp7", 
-        "mp9", "mac-10", "mag-7", "nova", "sawed-off", "xm1014", "galil", "famas", 
-        "sg 553", "aug", "ssg 08", "g3sg1", "scar-20", "m249", "negev"
-    ]):
-        price = max(price, 10.0)
-    
-    # Casos especiais para personagens/agentes
-    if any(agent in market_hash_name_lower for agent in [
-        "soldier", "operator", "muhlik", "cmdr", "doctor", "lieutenant", 
-        "saidan", "chef", "cypher", "enforcer", "crasswater", "farlow", "voltzmann"
-    ]):
-        price = max(price, 20.0)
-    
-    # Padrões de qualidade
-    for quality, name in QUALITY_NAMES.items():
-        if name.lower() in market_hash_name_lower or f"({quality.lower()})" in market_hash_name_lower:
-            # Aplicar um fator ao preço base estimado com base na qualidade
-            quality_factor = {
-                "FN": 1.5,    # Factory New - mais caro
-                "MW": 1.2,    # Minimal Wear
-                "FT": 1.0,    # Field-Tested - preço base
-                "WW": 0.8,    # Well-Worn
-                "BS": 0.6     # Battle-Scarred - mais barato
-            }.get(quality, 1.0)
-            
-            price *= quality_factor
-            break
-    
-    # Se nenhuma característica especial foi encontrada, usar um valor mínimo default
-    return max(price, 5.0)
 
 
 def get_steam_api_data(interface: str, method: str, version: str, params: dict) -> Optional[Dict]:

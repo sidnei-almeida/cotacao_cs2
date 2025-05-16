@@ -17,67 +17,10 @@ def load_cases_data() -> Dict[str, Any]:
         with open(CASES_FILE, 'r', encoding='utf-8') as f:
             return json.load(f)
     else:
-        # Dados mockados para iniciar o desenvolvimento
+        # Retornar estrutura vazia em vez de dados mockados
+        print("Arquivo de caixas não encontrado ou vazio. Retornando estrutura vazia.")
         return {
-            "cases": {
-                "operation_broken_fang_case": {
-                    "name": "Operation Broken Fang Case",
-                    "image": "https://csgostash.com/img/containers/Operation+Broken+Fang+Case.png",
-                    "items": [
-                        {
-                            "name": "Glock-18 | Neo-Noir",
-                            "rarity": "Covert",
-                            "probability": 0.0025
-                        },
-                        {
-                            "name": "M4A1-S | Printstream",
-                            "rarity": "Covert",
-                            "probability": 0.0025
-                        },
-                        {
-                            "name": "USP-S | Monster Mashup",
-                            "rarity": "Classified",
-                            "probability": 0.0125
-                        },
-                        {
-                            "name": "AWP | Exoskeleton",
-                            "rarity": "Classified",
-                            "probability": 0.0125
-                        },
-                        {
-                            "name": "M4A4 | Cyber Security",
-                            "rarity": "Restricted",
-                            "probability": 0.03
-                        }
-                    ]
-                },
-                "prisma_case": {
-                    "name": "Prisma Case",
-                    "image": "https://csgostash.com/img/containers/Prisma+Case.png",
-                    "items": [
-                        {
-                            "name": "AK-47 | Asiimov",
-                            "rarity": "Covert",
-                            "probability": 0.0025
-                        },
-                        {
-                            "name": "Desert Eagle | Lightbringer",
-                            "rarity": "Covert",
-                            "probability": 0.0025
-                        },
-                        {
-                            "name": "AWP | Atheris",
-                            "rarity": "Classified",
-                            "probability": 0.0125
-                        },
-                        {
-                            "name": "UMP-45 | Momentum",
-                            "rarity": "Restricted",
-                            "probability": 0.03
-                        }
-                    ]
-                }
-            }
+            "cases": {}
         }
 
 

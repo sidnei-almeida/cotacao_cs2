@@ -214,6 +214,7 @@ price_history_manager = PriceHistoryManager()
 def get_case_info(case_name: str) -> Optional[Dict[str, Any]]:
     """
     Obtém informações detalhadas de uma caixa específica do CS2.
+    Esta função agora retorna um dicionário vazio e deve ser implementada com scraping real.
     
     Args:
         case_name: Nome ou identificador da caixa
@@ -226,25 +227,15 @@ def get_case_info(case_name: str) -> Optional[Dict[str, Any]]:
     url = f"{CSGOSTASH_URL}/crates/{normalized_name}"
     
     try:
-        # Em um cenário real, faríamos o scraping aqui
-        # Mas como não estamos fazendo requisições reais, vamos retornar dados mockados
+        # Implementação futura: fazer o scraping real da página
+        # Retornar estrutura vazia para forçar o uso de dados reais em vez de mockados
+        print(f"get_case_info: Retornando informações vazias para '{case_name}'. Esta função deve ser implementada com scraping real.")
         
-        # Mockando as raridades e probabilidades
-        rarities = {
-            "Covert": 0.0025,  # 0.25%
-            "Classified": 0.0125,  # 1.25%
-            "Restricted": 0.03,  # 3%
-            "Mil-Spec": 0.15,  # 15%
-            "Consumer": 0.80,  # 80%
-            "Knife": 0.0025  # 0.25%
-        }
-        
-        # Aqui simularemos o que seria o resultado do scraping
-        # Em um cenário real, precisaríamos fazer o parsing do HTML da página
+        # Retornar um dicionário mínimo vazio que deve ser preenchido com dados reais
         return {
-            "rarities": rarities,
+            "rarities": {},
             "requires_key": True,
-            "key_price": 6.50
+            "key_price": 0.0
         }
         
     except Exception as e:
@@ -255,6 +246,7 @@ def get_case_info(case_name: str) -> Optional[Dict[str, Any]]:
 def get_all_cases() -> List[Dict[str, Any]]:
     """
     Obtém informações básicas de todas as caixas disponíveis no CS2.
+    Esta função agora retorna uma lista vazia e deve ser implementada com scraping real.
     
     Returns:
         Lista de dicionários com informações básicas de cada caixa
@@ -262,32 +254,11 @@ def get_all_cases() -> List[Dict[str, Any]]:
     url = f"{CSGOSTASH_URL}/crates"
     
     try:
-        # Em um cenário real, faríamos o scraping aqui
-        # Mas como não estamos fazendo requisições reais, vamos retornar dados mockados
-        
-        # Mockando uma lista de caixas
-        return [
-            {
-                "id": "operation_broken_fang_case",
-                "name": "Operation Broken Fang Case",
-                "image": "https://steamcommunity-a.akamaihd.net/economy/image/-9a81dlWLwJ2UUGcVs_nsVtzdOEdtWwKGZZLQHTxDZ7I56KU0Zwwo4NUX4oFJZEHLbXU5A1PIYQNqhpOSV-fRPasw8rsUFJ5KBFZv668FFUuh6qZJmlD7tiyl4OIlaGhYuLTzjhVupJ12urH89ii3lHlqEdoMDr2I5jVLFFridDMWO_f"
-            },
-            {
-                "id": "prisma_case",
-                "name": "Prisma Case",
-                "image": "https://steamcommunity-a.akamaihd.net/economy/image/-9a81dlWLwJ2UUGcVs_nsVtzdOEdtWwKGZZLQHTxDZ7I56KU0Zwwo4NUX4oFJZEHLbXU5A1PIYQNqhpOSV-fRPasw8rsUFJ5KBFZv668FFQwnfCcJmxDv9rhwILdx6L1ZuuAzzoF7sEmiLyQot-sigXk-EY9Mjr3JJjVLFHILUU"
-            },
-            {
-                "id": "clutch_case",
-                "name": "Clutch Case",
-                "image": "https://steamcommunity-a.akamaihd.net/economy/image/-9a81dlWLwJ2UUGcVs_nsVtzdOEdtWwKGZZLQHTxDZ7I56KU0Zwwo4NUX4oFJZEHLbXU5A1PIYQNqhpOSV-fRPasw8rsUFJ5KBFZv668FFUwnaLJJWtE4N65kIWZg8j3KqnUhFRd4cJ5nqeTpt2siVHlqEFuMGz2I4LAJwdqNwnVqwK6ye67hce4vJnPynUysylwsS3UyhfkiBtOcKUx0v3EV41s"
-            },
-            {
-                "id": "snakebite_case",
-                "name": "Snakebite Case",
-                "image": "https://steamcommunity-a.akamaihd.net/economy/image/-9a81dlWLwJ2UUGcVs_nsVtzdOEdtWwKGZZLQHTxDZ7I56KU0Zwwo4NUX4oFJZEHLbXU5A1PIYQNqhpOSV-fRPasw8rsUFJ5KBFZv668FFUznaCaJWVDvozlzdONwvKjYL6Bzm4A65V12u2TpNn321Hk-UdpZGv7JYHEJAVsZw2F_FC8kL3tm9bi60IYvmR3"
-            }
-        ]
+        # Implementação futura: fazer o scraping real da página
+        # Retornar lista vazia para forçar o uso de dados reais do banco de dados
+        # ou outras fontes em vez de dados mockados
+        print("get_all_cases: Retornando lista vazia. Esta função deve ser implementada com scraping real.")
+        return []
         
     except Exception as e:
         print(f"Erro ao obter lista de caixas: {e}")
@@ -333,24 +304,32 @@ def parse_case_page(html_content: str) -> Dict[str, Any]:
 
 def get_probability_by_rarity(rarity: str) -> float:
     """
-    Retorna a probabilidade estimada com base na raridade do item.
+    Retorna a probabilidade aproximada com base na raridade do item.
+    Estes valores são estimativas e devem ser substituídos por dados oficiais
+    ou estatísticas reais de abertura de caixas quando disponíveis.
     
     Args:
         rarity: Nome da raridade do item
         
     Returns:
-        Probabilidade estimada
+        Probabilidade estimada aproximada
     """
-    rarities = {
-        "Covert": 0.0025,  # 0.25%
-        "Classified": 0.0125,  # 1.25%
-        "Restricted": 0.03,  # 3%
-        "Mil-Spec": 0.15,  # 15%
-        "Consumer": 0.80,  # 80%
-        "Knife": 0.0025  # 0.25%
+    # Valores aproximados baseados em estimativas da comunidade
+    # Estes NÃO são valores oficiais e devem ser usados apenas como referência
+    # Devem ser substituídos por dados reais quando disponíveis
+    estimated_probabilities = {
+        "Covert": 0.0025,  # Aproximadamente 0.25%
+        "Classified": 0.0125,  # Aproximadamente 1.25%
+        "Restricted": 0.03,  # Aproximadamente 3%
+        "Mil-Spec": 0.15,  # Aproximadamente 15%
+        "Consumer": 0.80,  # Aproximadamente 80%
+        "Knife": 0.0025  # Aproximadamente 0.25%
     }
     
-    return rarities.get(rarity, 0.0)
+    # Aviso sobre o uso de valores aproximados
+    print(f"AVISO: Usando probabilidade estimada aproximada para raridade '{rarity}'. Substitua por dados reais quando disponíveis.")
+    
+    return estimated_probabilities.get(rarity, 0.0)
 
 
 # Função para processar preço obtido pelo scraper e atualizá-lo no histórico
@@ -420,7 +399,8 @@ def process_scraped_price(market_hash_name: str, price: float) -> float:
 
 def classify_item_for_price_range(market_hash_name: str) -> tuple:
     """
-    Classifica um item e retorna uma faixa de preço razoável.
+    Classifica um item e retorna uma faixa de preço razoável baseada na categoria.
+    Usa categorias amplas em vez de itens específicos para mais consistência.
     
     Args:
         market_hash_name: Nome do item no formato do mercado
@@ -431,64 +411,123 @@ def classify_item_for_price_range(market_hash_name: str) -> tuple:
     market_hash_name_lower = market_hash_name.lower()
     
     # Mapeamento de categorias de itens para faixas de preço (min, max) em reais
+    # Usando categorias mais amplas em vez de itens específicos
     categories = [
-        # Categoria: Facas - Itens mais caros
+        # Categoria: Facas
         {
             "category": "knife",
-            "keywords": ["★ ", "knife", "karambit", "bayonet", "butterfly"],
-            "price_range": (300.0, 5000.0)
+            "keywords": ["★ ", "knife", "karambit", "bayonet", "butterfly", "daggers", "shadow daggers", "falchion", "huntsman", "bowie", "ursus", "stiletto", "navaja", "talon", "classic knife", "skeleton knife", "paracord knife", "survival knife", "nomad knife"],
+            "price_range": (300.0, 15000.0)
         },
         # Categoria: Luvas
         {
             "category": "gloves",
-            "keywords": ["★ gloves", "★ hand", "sport gloves", "driver gloves"],
-            "price_range": (300.0, 4000.0)
+            "keywords": ["★ gloves", "★ hand", "sport gloves", "driver gloves", "specialist gloves", "moto gloves", "bloodhound gloves", "hydra gloves", "broken fang gloves"],
+            "price_range": (300.0, 5000.0)
         },
-        # Categoria: AWP (Sniper rifle popular)
+        # Categoria: AWP
         {
             "category": "awp",
             "keywords": ["awp"],
-            "price_range": (10.0, 500.0)
+            "price_range": (5.0, 15000.0)  # Faixa ampla para cobrir de skins comuns até Dragon Lore/Gungnir
         },
         # Categoria: Rifles populares
         {
-            "category": "popular_rifles",
-            "keywords": ["ak-47", "m4a4", "m4a1-s"],
-            "price_range": (5.0, 350.0)
+            "category": "rifles",
+            "keywords": ["ak-47", "m4a4", "m4a1-s", "sg 553", "aug", "famas", "galil", "ssg 08"],
+            "price_range": (2.0, 8000.0)  # Faixa ampla para cobrir de skins comuns até Howl/Fire Serpent
         },
-        # Categoria: Outras armas
+        # Categoria: Pistolas
         {
-            "category": "other_weapons",
-            "keywords": ["deagle", "desert eagle", "usp-s", "glock", "p250"],
-            "price_range": (2.0, 150.0)
+            "category": "pistols",
+            "keywords": ["deagle", "desert eagle", "usp-s", "glock", "p250", "five-seven", "tec-9", "p2000", "cz75", "r8 revolver", "dual berettas"],
+            "price_range": (1.0, 500.0)
         },
-        # Categoria: Cases (Caixas)
+        # Categoria: Submetralhadoras
+        {
+            "category": "smgs",
+            "keywords": ["mp5", "mp7", "mp9", "mac-10", "ump-45", "pp-bizon", "p90"],
+            "price_range": (1.0, 200.0)
+        },
+        # Categoria: Escopetas
+        {
+            "category": "shotguns",
+            "keywords": ["nova", "xm1014", "mag-7", "sawed-off"],
+            "price_range": (1.0, 200.0)
+        },
+        # Categoria: Metralhadoras
+        {
+            "category": "machine_guns",
+            "keywords": ["m249", "negev"],
+            "price_range": (1.0, 150.0)
+        },
+        # Categoria: Caixas
         {
             "category": "cases",
             "keywords": ["case", "caixa"],
-            "price_range": (0.5, 30.0)
+            "price_range": (0.5, 50.0)
         },
-        # Categoria: Stickers (Adesivos)
+        # Categoria: Adesivos
         {
             "category": "stickers",
             "keywords": ["sticker", "adesivo"],
-            "price_range": (0.5, 50.0)
+            "price_range": (0.5, 1000.0)  # Alguns adesivos raros podem ser valiosos
         },
-        # Categoria: Agents (Agentes) - Foco principal nos problemas
+        # Categoria: Agentes
         {
             "category": "agents",
-            "keywords": ["agent", "agente", "soldier", "operator", "muhlik", 
-                         "cmdr", "doctor", "lieutenant", "saidan", "chef", 
-                         "cypher", "enforcer", "crasswater", "farlow", "voltzmann"],
-            "price_range": (10.0, 40.0)  # Faixa estreita para evitar valores absurdos
+            "keywords": ["agent", "agente", "operator", "soldier", "saidan", "chef", "enforcer", "muhlik"],
+            "price_range": (5.0, 100.0)
+        },
+        # Categoria: Patches e Pins
+        {
+            "category": "patches_pins",
+            "keywords": ["patch", "pin"],
+            "price_range": (1.0, 50.0)
+        },
+        # Categoria: Grafite
+        {
+            "category": "graffiti",
+            "keywords": ["graffiti", "spray"],
+            "price_range": (0.5, 10.0)
+        },
+        # Categoria: Música
+        {
+            "category": "music",
+            "keywords": ["music kit", "kit de música"],
+            "price_range": (1.0, 30.0)
         }
     ]
     
-    # Verificar cada categoria
+    # Verificar raridade com base na descrição do item
+    rarities = {
+        "factory new": 1.5,
+        "minimal wear": 1.2,
+        "field-tested": 1.0,
+        "well-worn": 0.8,
+        "battle-scarred": 0.6,
+        "souvenir": 1.5,
+        "stattrak": 1.5
+    }
+    
+    # Multiplicador de raridade padrão
+    rarity_multiplier = 1.0
+    
+    # Verificar se o item tem alguma indicação de raridade especial
+    for rarity, multiplier in rarities.items():
+        if rarity in market_hash_name_lower:
+            rarity_multiplier = multiplier
+            break
+    
+    # Verificar a categoria do item
     for category in categories:
         for keyword in category["keywords"]:
             if keyword in market_hash_name_lower:
-                return category["category"], category["price_range"]
+                min_price, max_price = category["price_range"]
+                # Ajustar preços com base na raridade
+                min_price *= rarity_multiplier
+                max_price *= rarity_multiplier
+                return category["category"], (min_price, max_price)
     
-    # Padrão para itens desconhecidos
-    return "unknown", (1.0, 50.0)
+    # Padrão para itens desconhecidos: faixa conservadora
+    return "unknown", (1.0, 100.0)
