@@ -164,33 +164,35 @@ def extract_price_from_text(price_text: str, currency_code: int = STEAM_MARKET_C
 def get_item_price_via_scraping(market_hash_name: str, appid: int = STEAM_APPID, currency: int = STEAM_MARKET_CURRENCY) -> Optional[Dict]:
     """
     Obtém o preço de um item através de scraping da página do mercado da Steam.
+    Usa a busca geral do mercado Steam sem especificar o AppID.
     
     Args:
         market_hash_name: Nome do item formatado para o mercado
-        appid: ID da aplicação na Steam (730 = CS2)
+        appid: ID da aplicação na Steam (não utilizado nesta versão)
         currency: Código da moeda (1 = USD)
         
     Returns:
         Dicionário com preço e moeda do item, ou None se falhar
     """
-    # URL codificada para o item
+    # URL codificada para o item - VERSÃO SEM APPID
     encoded_name = requests.utils.quote(market_hash_name)
-    url = f"{STEAM_MARKET_BASE_URL}/{appid}/{encoded_name}"
+    # Usar a URL sem AppID
+    url = f"https://steamcommunity.com/market/listings/{encoded_name}"
     
     # Adicionar parâmetro de moeda
     url += f"?currency={currency}"
     
     print(f"DEBUGGING: Obtendo preço para '{market_hash_name}'")
-    print(f"DEBUGGING: URL de consulta: {url}")
+    print(f"DEBUGGING: URL de consulta sem AppID: {url}")
 
     # Aguardar tempo entre requisições
     sleep_between_requests()
     
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-        'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
+        'Accept-Language': 'en-US,en;q=0.9',  # Definir inglês para padronizar formato
         'Cache-Control': 'no-cache',
-        'Referer': 'https://steamcommunity.com/market/search?appid=730'
+        'Referer': 'https://steamcommunity.com/market'
     }
     
     try:
@@ -429,14 +431,9 @@ def get_item_price_via_scraping(market_hash_name: str, appid: int = STEAM_APPID,
     except Exception as e:
         print(f"DEBUGGING: Segunda tentativa falhou: {e}")
     
-    # Valor fallback mínimo razoável para CS2
-    print("DEBUGGING: Nenhum preço encontrado, usando fallback")
-    return {
-        "price": 8.0,  # Valor fallback mais razoável para skins comuns
-        "currency": "USD",  # Moeda padrão para fallback
-        "sources_count": 0,
-        "is_fallback": True
-    }
+    # Se não foi possível obter o preço, gerar um erro em vez de usar um valor fallback
+    print("DEBUGGING: Nenhum preço encontrado, gerando erro")
+    raise Exception(f"Não foi possível obter o preço para {market_hash_name}")
 
 
 def get_item_price(market_hash_name: str, currency: int = None, appid: int = None) -> Dict:
