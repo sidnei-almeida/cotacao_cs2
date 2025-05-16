@@ -6,7 +6,7 @@ load_dotenv()
 
 # Configurações do mercado da Steam
 STEAM_API_KEY = os.getenv('STEAM_API_KEY', '56C6D1730D781A4FE3A05830CDF23E8A')  # Chave API da Steam
-STEAM_MARKET_CURRENCY = int(os.getenv('STEAM_MARKET_CURRENCY', '7'))  # 7 = BRL (Real Brasileiro)
+STEAM_MARKET_CURRENCY = int(os.getenv('STEAM_MARKET_CURRENCY', '1'))  # 1 = USD (Dólar Americano)
 STEAM_APPID = int(os.getenv('STEAM_APPID', '730'))  # 730 = CS2
 
 # Configurações de rate limit
@@ -24,7 +24,7 @@ def get_api_config() -> dict:
     return {
         "steam_api_key": STEAM_API_KEY[:5] + "..." if STEAM_API_KEY else "Não configurada",
         "currency": STEAM_MARKET_CURRENCY,
-        "currency_name": "BRL" if STEAM_MARKET_CURRENCY == 7 else "Desconhecida",
+        "currency_name": "USD" if STEAM_MARKET_CURRENCY == 1 else "BRL" if STEAM_MARKET_CURRENCY == 7 else "Desconhecida",
         "appid": STEAM_APPID,
         "app_name": "Counter-Strike 2" if STEAM_APPID == 730 else "Desconhecido",
         "rate_limit": {

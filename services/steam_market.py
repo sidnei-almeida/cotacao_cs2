@@ -114,7 +114,7 @@ def convert_currency(price: float, from_currency: str, to_currency: str = 'BRL')
     return price
 
 
-def extract_price_from_text(price_text: str, currency_code: int = STEAM_MARKET_CURRENCY) -> Optional[float]:
+def extract_price_from_text(price_text: str, currency_code: int = STEAM_MARKET_CURRENCY) -> Optional[Dict]:
     """
     Extrai o valor numérico de um texto de preço.
     
@@ -123,7 +123,7 @@ def extract_price_from_text(price_text: str, currency_code: int = STEAM_MARKET_C
         currency_code: Código da moeda para formatação correta
         
     Returns:
-        Valor numérico do preço ou None se não for possível extrair
+        Dicionário contendo o preço e a moeda original, ou None se não for possível extrair
     """
     if not price_text:
         return None
@@ -133,16 +133,18 @@ def extract_price_from_text(price_text: str, currency_code: int = STEAM_MARKET_C
     
     try:
         # Detectar a moeda do texto
-        original_currency = 'BRL'  # Padrão
+        original_currency = 'USD'  # Padrão alterado para USD
         
         # Verificação de moeda baseada no símbolo
-        if '$' in price_text and 'R$' not in price_text:
-            original_currency = 'USD'
+        if 'R$' in price_text:
+            original_currency = 'BRL'
         elif '€' in price_text:
             original_currency = 'EUR'
+        elif '£' in price_text:
+            original_currency = 'GBP'    
             
         # Armazenar o símbolo para log
-        currency_symbol = {'BRL': 'R$', 'USD': '$', 'EUR': '€'}.get(original_currency, '')
+        currency_symbol = {'BRL': 'R$', 'USD': '$', 'EUR': '€', 'GBP': '£'}.get(original_currency, '')
         
         # Remover todos os caracteres não-numéricos, exceto ponto e vírgula
         cleaned_text = re.sub(r'[^\d.,]', '', price_text)
@@ -167,9 +169,7 @@ def extract_price_from_text(price_text: str, currency_code: int = STEAM_MARKET_C
         # Converter para float
         price = float(cleaned_text)
         
-        # Converter para BRL se estiver em outra moeda
-        if original_currency != 'BRL' and currency_code == 7:  # 7 = BRL
-            price = convert_currency(price, original_currency, 'BRL')
+        # Não realizar conversão aqui, apenas retornar o valor e moeda original
         
         # CORREÇÃO: Verificação adicional para valores absurdos
         # Se o valor for extremamente alto para o tipo de item, provavelmente é um erro
@@ -193,36 +193,51 @@ def extract_price_from_text(price_text: str, currency_code: int = STEAM_MARKET_C
         for item_type, max_limit in max_limits.items():
             if item_type.lower() in price_text.lower() and price > max_limit:
                 print(f"AVISO: Valor extremamente alto detectado: {price} de '{price_text}' para categoria {item_type}. Ajustando para máximo razoável: {max_limit}")
-                return max_limit
+                return {
+                    "price": max_limit,
+                    "currency": original_currency,
+                    "adjusted": True
+                }
                 
         # Verificação geral para itens não identificados
         # Itens muito caros: facas, luvas, skins raras
         if "★" in price_text and price > 5000.0:
             print(f"AVISO: Valor alto para item especial: {price} de '{price_text}'. Permitido por ter símbolo ★")
-            return price
+            return {
+                "price": price,
+                "currency": original_currency,
+                "special": True
+            }
             
         # Para itens comuns não identificados com preços absurdos
         if price > 350.0 and not any(special in price_text for special in ["★", "Covert", "Red", "Knife", "Glove", "Dragon", "Howl", "Fire Serpent"]):
             print(f"AVISO: Valor possivelmente incorreto: {price} de '{price_text}'. Ajustando para valor razoável: 50.0")
-            return 50.0
+            return {
+                "price": 50.0,
+                "currency": original_currency,
+                "adjusted": True
+            }
             
-        return price
+        return {
+            "price": price,
+            "currency": original_currency
+        }
     except (ValueError, AttributeError):
         print(f"Erro ao extrair preço do texto: '{price_text}'")
         return None
 
 
-def get_item_price_via_scraping(market_hash_name: str, appid: int = STEAM_APPID, currency: int = STEAM_MARKET_CURRENCY) -> Optional[float]:
+def get_item_price_via_scraping(market_hash_name: str, appid: int = STEAM_APPID, currency: int = STEAM_MARKET_CURRENCY) -> Optional[Dict]:
     """
     Obtém o preço de um item através de scraping da página do mercado da Steam.
     
     Args:
         market_hash_name: Nome do item formatado para o mercado
         appid: ID da aplicação na Steam (730 = CS2)
-        currency: Código da moeda (7 = BRL)
+        currency: Código da moeda (1 = USD)
         
     Returns:
-        Preço médio do item ou None se falhar
+        Dicionário com preço e moeda do item, ou None se falhar
     """
     # URL codificada para o item
     encoded_name = requests.utils.quote(market_hash_name)
@@ -265,10 +280,10 @@ def get_item_price_via_scraping(market_hash_name: str, appid: int = STEAM_APPID,
                 print(f"DEBUGGING: Texto do elemento de preço principal: '{price_text}'")
                 # Verificar se contém o formato de preço correto (símbolo de moeda)
                 if any(symbol in price_text for symbol in ['R$', '$', '€', '¥', '£', 'kr', 'zł', '₽']):
-                    price = extract_price_from_text(price_text, currency)
-                    if price and price > 0:
-                        all_prices.append((price, f"Preço principal: {price_text}"))
-                        print(f"DEBUGGING: Preço principal encontrado: {price} ({price_text})")
+                    price_data = extract_price_from_text(price_text, currency)
+                    if price_data and price_data["price"] > 0:
+                        all_prices.append((price_data, f"Preço principal: {price_text}"))
+                        print(f"DEBUGGING: Preço principal encontrado: {price_data['price']} {price_data['currency']} ({price_text})")
             
             # 2. Buscar no histograma de vendas recentes
             histogram_element = parser.css_first("div.market_listing_price_listings_block")
@@ -279,10 +294,10 @@ def get_item_price_via_scraping(market_hash_name: str, appid: int = STEAM_APPID,
                     print(f"DEBUGGING: Texto do histograma: '{price_text}'")
                     # Verificar se é um preço real (contém símbolo de moeda)
                     if any(symbol in price_text for symbol in ['R$', '$', '€', '¥', '£', 'kr', 'zł', '₽']):
-                        price = extract_price_from_text(price_text, currency)
-                        if price and price > 0:
-                            all_prices.append((price, f"Histograma: {price_text}"))
-                            print(f"DEBUGGING: Preço do histograma: {price} ({price_text})")
+                        price_data = extract_price_from_text(price_text, currency)
+                        if price_data and price_data["price"] > 0:
+                            all_prices.append((price_data, f"Histograma: {price_text}"))
+                            print(f"DEBUGGING: Preço do histograma: {price_data['price']} {price_data['currency']} ({price_text})")
             
             # 3. Buscar nos dados JavaScript da página
             script_tags = parser.css("script")
@@ -306,10 +321,10 @@ def get_item_price_via_scraping(market_hash_name: str, appid: int = STEAM_APPID,
                         print(f"DEBUGGING: Texto de preço encontrado em JavaScript: '{price_text}'")
                         # Verificar se é um preço real (contém símbolo de moeda)
                         if any(symbol in price_text for symbol in ['R$', '$', '€', '¥', '£', 'kr', 'zł', '₽']):
-                            price = extract_price_from_text(price_text, currency)
-                            if price and price > 0:
-                                all_prices.append((price, f"JavaScript: {price_text}"))
-                                print(f"DEBUGGING: Preço em JavaScript: {price} ({price_text})")
+                            price_data = extract_price_from_text(price_text, currency)
+                            if price_data and price_data["price"] > 0:
+                                all_prices.append((price_data, f"JavaScript: {price_text}"))
+                                print(f"DEBUGGING: Preço em JavaScript: {price_data['price']} {price_data['currency']} ({price_text})")
             
             if not price_patterns_found:
                 print("DEBUGGING: Nenhum padrão de preço encontrado nos scripts JavaScript")
@@ -319,21 +334,30 @@ def get_item_price_via_scraping(market_hash_name: str, appid: int = STEAM_APPID,
                 print(f"DEBUGGING: Total de preços encontrados: {len(all_prices)}")
                 
                 # Filtrar preços claramente inválidos (valores extremamente baixos ou altos)
-                valid_prices = [(p, src) for p, src in all_prices if p >= 0.1]  # Mínimo de 0.1 para evitar erros
+                valid_prices = [(p, src) for p, src in all_prices if p["price"] >= 0.1]  # Mínimo de 0.1 para evitar erros
                 print(f"DEBUGGING: Preços válidos após filtragem: {len(valid_prices)}")
                 
                 if valid_prices:
                     # Ordenar por preço
-                    valid_prices.sort(key=lambda x: x[0])
+                    valid_prices.sort(key=lambda x: x[0]["price"])
                     
                     # Mostrar todos os preços encontrados para debug
                     print(f"DEBUGGING: Todos os preços válidos encontrados para {market_hash_name}:")
-                    for price, source in valid_prices:
-                        print(f"DEBUGGING:   - {price:.2f} ({source})")
+                    for price_data, source in valid_prices:
+                        print(f"DEBUGGING:   - {price_data['price']:.2f} {price_data['currency']} ({source})")
+                    
+                    # Pegar a moeda predominante
+                    currency_counts = {}
+                    for price_data, _ in valid_prices:
+                        curr = price_data["currency"]
+                        currency_counts[curr] = currency_counts.get(curr, 0) + 1
+                    
+                    predominant_currency = max(currency_counts.items(), key=lambda x: x[1])[0]
+                    print(f"DEBUGGING: Moeda predominante: {predominant_currency}")
                     
                     # Se temos múltiplos preços, calcular média e mediana
                     if len(valid_prices) > 1:
-                        prices_only = [p for p, _ in valid_prices]
+                        prices_only = [p["price"] for p, _ in valid_prices]
                         mean_price = sum(prices_only) / len(prices_only)
                         median_index = len(prices_only) // 2
                         median_price = prices_only[median_index]
@@ -360,20 +384,25 @@ def get_item_price_via_scraping(market_hash_name: str, appid: int = STEAM_APPID,
                                     lowest_legitimate_price = median_price
                                     print(f"DEBUGGING:   - Usando mediana {median_price:.2f} em vez do outlier baixo")
                         
-                        # Verificar se o valor está em USD e necessita conversão
+                        # O preço final agora usa a moeda original detectada
                         final_price = lowest_legitimate_price
-                        if currency == 1 or "USD" in str(valid_prices):  # 1 = USD
-                            # Converter para BRL se necessário
-                            final_price = convert_currency(lowest_legitimate_price, 'USD', 'BRL')
-                            print(f"DEBUGGING:   - Preço convertido de USD para BRL: {final_price:.2f}")
+                        final_currency = predominant_currency
                         
-                        print(f"DEBUGGING:   - Preço final: {final_price:.2f}")
-                        return final_price
+                        print(f"DEBUGGING:   - Preço final: {final_price:.2f} {final_currency}")
+                        return {
+                            "price": final_price,
+                            "currency": final_currency,
+                            "sources_count": len(valid_prices)
+                        }
                     else:
                         # Se só temos um preço, usar esse
-                        price, source = valid_prices[0]
-                        print(f"DEBUGGING: Apenas um preço encontrado: {price:.2f} ({source})")
-                        return price
+                        price_data, source = valid_prices[0]
+                        print(f"DEBUGGING: Apenas um preço encontrado: {price_data['price']:.2f} {price_data['currency']} ({source})")
+                        return {
+                            "price": price_data["price"],
+                            "currency": price_data["currency"],
+                            "sources_count": 1
+                        }
             
             # Se não encontrou nenhum preço válido
             print(f"DEBUGGING: Não foi possível encontrar preços válidos para {market_hash_name}")
@@ -415,47 +444,68 @@ def get_item_price_via_scraping(market_hash_name: str, appid: int = STEAM_APPID,
                 print(f"DEBUGGING: Segunda tentativa - texto de preço: '{price_text}'")
                 # Verificar se é de fato um preço (contém símbolo de moeda)
                 if any(symbol in price_text for symbol in ['R$', '$', '€', '¥', '£', 'kr', 'zł', '₽']):
-                    price = extract_price_from_text(price_text, currency)
-                    if price and price > 0:
-                        all_prices.append((price, price_text))
+                    price_data = extract_price_from_text(price_text, currency)
+                    if price_data and price_data["price"] > 0:
+                        all_prices.append((price_data, price_text))
             
             # Se encontrou candidatos, analisar
             if all_prices:
                 # Ordenar por preço (menor primeiro)
-                all_prices.sort(key=lambda x: x[0])
+                all_prices.sort(key=lambda x: x[0]["price"])
+                
+                # Determinar a moeda predominante
+                currency_counts = {}
+                for price_data, _ in all_prices:
+                    curr = price_data["currency"]
+                    currency_counts[curr] = currency_counts.get(curr, 0) + 1
+                    
+                predominant_currency = max(currency_counts.items(), key=lambda x: x[1])[0]
                 
                 # Filtrar candidatos que parecem ser quantidades
-                valid_prices = [(price, text) for price, text in all_prices 
-                               if not (price > 100 and price.is_integer() and price % 50 == 0)]
+                valid_prices = [(price_data, text) for price_data, text in all_prices 
+                               if not (price_data["price"] > 100 and price_data["price"].is_integer() and price_data["price"] % 50 == 0)]
                 
-                print(f"DEBUGGING: Segunda tentativa - preços válidos: {valid_prices}")
+                print(f"DEBUGGING: Segunda tentativa - preços válidos: {[(p['price'], p['currency']) for p, _ in valid_prices]}")
                 
                 if valid_prices:
                     # Se temos múltiplos preços, calcular média e mediana
                     if len(valid_prices) > 1:
-                        prices_only = [p for p, _ in valid_prices]
+                        prices_only = [p["price"] for p, _ in valid_prices]
                         median_price = prices_only[len(prices_only) // 2]
                         lowest_price = prices_only[0]
                         
                         # Verificar se o menor preço parece suspeito (muito abaixo da mediana), usar a mediana
                         if lowest_price < median_price * 0.5 and len(valid_prices) > 2:
                             print(f"DEBUGGING: Segunda tentativa - preço mais baixo ({lowest_price:.2f}) é outlier. Usando mediana ({median_price:.2f})")
-                            return median_price
+                            return {
+                                "price": median_price,
+                                "currency": predominant_currency,
+                                "sources_count": len(valid_prices)
+                            }
                     
                     # Retornar o preço mais baixo (ou único)
-                    lowest_price, price_text = valid_prices[0]
-                    print(f"DEBUGGING: Segunda tentativa - preço mais baixo: {lowest_price} ({price_text})")
-                    return lowest_price
+                    price_data, price_text = valid_prices[0]
+                    print(f"DEBUGGING: Segunda tentativa - preço mais baixo: {price_data['price']:.2f} {price_data['currency']} ({price_text})")
+                    return {
+                        "price": price_data["price"],
+                        "currency": price_data["currency"],
+                        "sources_count": len(valid_prices)
+                    }
         
     except Exception as e:
         print(f"DEBUGGING: Segunda tentativa falhou: {e}")
     
     # Valor fallback mínimo razoável para CS2
     print("DEBUGGING: Nenhum preço encontrado, usando fallback")
-    return 8.0  # Valor fallback mais razoável para skins comuns
+    return {
+        "price": 8.0,  # Valor fallback mais razoável para skins comuns
+        "currency": "USD",  # Moeda padrão para fallback
+        "sources_count": 0,
+        "is_fallback": True
+    }
 
 
-def get_item_price(market_hash_name: str, currency: int = None, appid: int = None) -> float:
+def get_item_price(market_hash_name: str, currency: int = None, appid: int = None) -> Dict:
     """
     Obtém o preço atual de um item no Steam Market.
     Primeiro verifica no banco de dados SQLite, e se não encontrar ou estiver desatualizado,
@@ -467,7 +517,7 @@ def get_item_price(market_hash_name: str, currency: int = None, appid: int = Non
         appid: ID da aplicação na Steam (padrão definido em configuração)
         
     Returns:
-        Preço médio atual do item
+        Dicionário com o preço, a moeda e outras informações do item
     """
     if currency is None:
         currency = STEAM_MARKET_CURRENCY
@@ -486,8 +536,13 @@ def get_item_price(market_hash_name: str, currency: int = None, appid: int = Non
     if db_price is not None:
         print(f"Usando preço do banco de dados para {market_hash_name}: {db_price}")
         # Atualizar o cache em memória
-        price_cache[cache_key] = db_price
-        return db_price
+        price_data = {
+            "price": db_price,
+            "currency": "USD" if currency == 1 else "BRL" if currency == 7 else "EUR" if currency == 3 else "UNKNOWN",
+            "source": "database"
+        }
+        price_cache[cache_key] = price_data
+        return price_data
     
     # Classificar o item em categorias para determinar limites de preço razoáveis
     item_category, price_limit = classify_item_and_get_price_limit(market_hash_name)
@@ -496,20 +551,24 @@ def get_item_price(market_hash_name: str, currency: int = None, appid: int = Non
     # Buscar preço via scraping
     try:
         print(f"Buscando preço via scraping para {market_hash_name}")
-        raw_price = get_item_price_via_scraping(market_hash_name, appid, currency) or 0.0
+        price_data = get_item_price_via_scraping(market_hash_name, appid, currency) or {"price": 0.0, "currency": "USD"}
         
         # Registrar que o scraping foi feito para este item
         update_last_scrape_time(market_hash_name, currency, appid)
         
         # Processar o preço obtido usando o sistema que inclui histórico e correções estatísticas
-        price = process_scraped_price(market_hash_name, raw_price)
+        processed_price = process_scraped_price(market_hash_name, price_data["price"])
+        
+        # Atualizar o valor processado mantendo as outras informações
+        price_data["price"] = processed_price
+        price_data["processed"] = True
         
         # Se o scraping retornou um valor válido, usar e armazenar no cache
-        if price > 0:
-            print(f"Preço processado para {market_hash_name}: R$ {price}")
-            price_cache[cache_key] = price
-            save_skin_price(market_hash_name, price, currency, appid)  # Salvar no banco
-            return price
+        if processed_price > 0:
+            print(f"Preço processado para {market_hash_name}: {processed_price} {price_data['currency']}")
+            price_cache[cache_key] = price_data
+            save_skin_price(market_hash_name, processed_price, currency, appid)  # Salvar no banco
+            return price_data
     except Exception as e:
         print(f"Erro ao fazer scraping para {market_hash_name}: {e}")
     
@@ -517,12 +576,18 @@ def get_item_price(market_hash_name: str, currency: int = None, appid: int = Non
     # Definimos um preço padrão baixo em vez de estimar com base em características
     default_price = 1.0  # Preço fallback mínimo
     
-    print(f"Scraping falhou para {market_hash_name}. Usando preço padrão de R$ {default_price}")
+    print(f"Scraping falhou para {market_hash_name}. Usando preço padrão de {default_price} USD")
     
     # Armazenar no cache e no banco e retornar
-    price_cache[cache_key] = default_price
+    fallback_data = {
+        "price": default_price,
+        "currency": "USD",
+        "is_fallback": True,
+        "source": "fallback"
+    }
+    price_cache[cache_key] = fallback_data
     save_skin_price(market_hash_name, default_price, currency, appid)  # Salvar no banco
-    return default_price
+    return fallback_data
 
 
 def classify_item_and_get_price_limit(market_hash_name: str) -> tuple:

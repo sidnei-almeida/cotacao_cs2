@@ -434,8 +434,27 @@ async def price(market_hash_name: str, response: Response, request: Request = No
     response.headers["Access-Control-Allow-Headers"] = "*"
     
     try:
-        item_price = get_item_price(market_hash_name)
-        return {"market_hash_name": market_hash_name, "price": item_price}
+        item_price_data = get_item_price(market_hash_name)
+        
+        # Construir resposta com informações de moeda
+        response_data = {
+            "market_hash_name": market_hash_name,
+            "price": item_price_data["price"],
+            "currency": item_price_data["currency"],
+            "timestamp": datetime.datetime.now().isoformat()
+        }
+        
+        # Adicionar campos opcionais se existirem
+        if "sources_count" in item_price_data:
+            response_data["sources_count"] = item_price_data["sources_count"]
+            
+        if "is_fallback" in item_price_data:
+            response_data["is_fallback"] = item_price_data["is_fallback"]
+            
+        if "processed" in item_price_data:
+            response_data["processed"] = item_price_data["processed"]
+            
+        return response_data
     except Exception as e:
         return {"error": str(e), "market_hash_name": market_hash_name}
 
