@@ -723,15 +723,9 @@ async def _complete_inventory_analysis(
 
 # Novos endpoints para o usuário autenticado
 @app.get("/my/inventory")
-async def my_inventory(request: Request, current_user: dict = Depends(get_current_user), response: Response = None):
+async def my_inventory(current_user: dict = Depends(get_current_user), response: Response = None, request: Request = None):
     """Retorna os itens do inventário do usuário autenticado"""
     # CORS tratado pelo middleware global
-    
-    # Tentar obter o token de parâmetro de URL se não estiver nos headers
-    if current_user is None:
-        token_param = request.query_params.get("token")
-        if token_param:
-            current_user = get_current_user(token_param, request)
     
     if not current_user:
         raise HTTPException(status_code=401, detail="Autenticação necessária")
@@ -759,20 +753,14 @@ async def my_inventory(request: Request, current_user: dict = Depends(get_curren
 
 @app.get("/my/inventory/complete")
 async def my_inventory_complete(
-    request: Request,
     current_user: dict = Depends(get_current_user),
     session_id: str = Query(None),
     steam_token: str = Query(None),
-    response: Response = None
+    response: Response = None,
+    request: Request = None
 ):
     """Retorna o inventário completo do usuário, incluindo conteúdo das unidades de armazenamento"""
     # CORS tratado pelo middleware global
-    
-    # Tentar obter o token de parâmetro de URL se não estiver nos headers
-    if current_user is None:
-        token_param = request.query_params.get("token")
-        if token_param:
-            current_user = get_current_user(token_param, request)
     
     if not current_user:
         raise HTTPException(status_code=401, detail="Autenticação necessária")
@@ -795,15 +783,9 @@ async def my_inventory_complete(
 
 
 @app.get("/my/inventory/full")
-async def my_inventory_full(request: Request, current_user: dict = Depends(get_current_user), response: Response = None):
+async def my_inventory_full(current_user: dict = Depends(get_current_user), response: Response = None, request: Request = None):
     """Retorna análise completa do inventário do usuário autenticado, com categorias"""
     # CORS tratado pelo middleware global
-    
-    # Tentar obter o token de parâmetro de URL se não estiver nos headers
-    if current_user is None:
-        token_param = request.query_params.get("token")
-        if token_param:
-            current_user = get_current_user(token_param, request)
     
     if not current_user:
         raise HTTPException(status_code=401, detail="Autenticação necessária")
