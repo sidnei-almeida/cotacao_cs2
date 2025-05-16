@@ -518,6 +518,9 @@ def get_item_price(market_hash_name: str, currency: int = None, appid: int = Non
         
     Returns:
         Dicionário com o preço, a moeda e outras informações do item
+        
+    Raises:
+        Exception: Se não for possível obter o preço atual do mercado Steam
     """
     if currency is None:
         currency = STEAM_MARKET_CURRENCY
@@ -551,7 +554,11 @@ def get_item_price(market_hash_name: str, currency: int = None, appid: int = Non
     # Buscar preço via scraping
     try:
         print(f"Buscando preço via scraping para {market_hash_name}")
-        price_data = get_item_price_via_scraping(market_hash_name, appid, currency) or {"price": 0.0, "currency": "USD"}
+        price_data = get_item_price_via_scraping(market_hash_name, appid, currency)
+        
+        # Verificar se o scraping retornou dados válidos
+        if not price_data or price_data.get("price", 0) <= 0:
+            raise Exception(f"Não foi possível obter o preço atual de {market_hash_name} no mercado Steam")
         
         # Registrar que o scraping foi feito para este item
         update_last_scrape_time(market_hash_name, currency, appid)
@@ -559,35 +566,23 @@ def get_item_price(market_hash_name: str, currency: int = None, appid: int = Non
         # Processar o preço obtido usando o sistema que inclui histórico e correções estatísticas
         processed_price = process_scraped_price(market_hash_name, price_data["price"])
         
+        # Verificar se o processamento retornou um preço válido
+        if processed_price <= 0:
+            raise Exception(f"O processamento resultou em um preço inválido para {market_hash_name}")
+        
         # Atualizar o valor processado mantendo as outras informações
         price_data["price"] = processed_price
         price_data["processed"] = True
         
-        # Se o scraping retornou um valor válido, usar e armazenar no cache
-        if processed_price > 0:
-            print(f"Preço processado para {market_hash_name}: {processed_price} {price_data['currency']}")
-            price_cache[cache_key] = price_data
-            save_skin_price(market_hash_name, processed_price, currency, appid)  # Salvar no banco
-            return price_data
+        # Armazenar no cache e banco de dados
+        price_cache[cache_key] = price_data
+        save_skin_price(market_hash_name, processed_price, currency, appid)  # Salvar no banco
+        
+        return price_data
     except Exception as e:
         print(f"Erro ao fazer scraping para {market_hash_name}: {e}")
-    
-    # Se chegou aqui, o scraping falhou ou retornou preço zero
-    # Definimos um preço padrão baixo em vez de estimar com base em características
-    default_price = 1.0  # Preço fallback mínimo
-    
-    print(f"Scraping falhou para {market_hash_name}. Usando preço padrão de {default_price} USD")
-    
-    # Armazenar no cache e no banco e retornar
-    fallback_data = {
-        "price": default_price,
-        "currency": "USD",
-        "is_fallback": True,
-        "source": "fallback"
-    }
-    price_cache[cache_key] = fallback_data
-    save_skin_price(market_hash_name, default_price, currency, appid)  # Salvar no banco
-    return fallback_data
+        # Propagar o erro para o frontend em vez de usar fallback
+        raise Exception(f"Erro ao obter preço para {market_hash_name}: {str(e)}")
 
 
 def classify_item_and_get_price_limit(market_hash_name: str) -> tuple:
