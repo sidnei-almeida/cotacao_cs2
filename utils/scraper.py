@@ -335,66 +335,26 @@ def get_probability_by_rarity(rarity: str) -> float:
 # Função para processar preço obtido pelo scraper e atualizá-lo no histórico
 def process_scraped_price(market_hash_name: str, price: float) -> float:
     """
-    Processa um preço obtido por scraping, aplicando filtros estatísticos para evitar valores discrepantes
+    Processa um preço obtido por scraping, apenas filtrando por erros óbvios,
+    mas sem impor limites por categoria.
     
     Args:
         market_hash_name: Nome do item no formato do mercado
         price: Preço coletado
         
     Returns:
-        Preço processado e filtrado para evitar outliers
+        Preço processado
     """
-    # Verificar se o preço é válido
+    # Verificar se o preço é válido (apenas se é maior que zero)
     if price is None or price <= 0:
         return 0.0
     
-    # DETECÇÃO DE OUTLIER: Verificar se o preço está muito fora da faixa esperada
-    # Este é um filtro preliminar para preços absurdamente fora da realidade
-    
-    # Classificar o item em categorias para determinar os limites de preço razoável
-    item_category, price_range = classify_item_for_price_range(market_hash_name)
-    min_reasonable_price, max_reasonable_price = price_range
-    
-    # Se o preço estiver muito fora da faixa razoável (mais de 10x o limite superior),
-    # consideramos como um outlier extremo e aplicamos tratamento estatístico
-    if price > max_reasonable_price * 10:
-        print(f"OUTLIER EXTREMO: Preço absurdo para {market_hash_name}: {price:.2f} está muito acima do limite máximo esperado ({max_reasonable_price:.2f})")
-        
-        # Se tivermos histórico para este item, usar o histórico em vez do valor atual
-        existing_price = price_history_manager.get_clean_price(market_hash_name)
-        if existing_price is not None:
-            print(f"Usando preço histórico existente: {existing_price:.2f}")
-            
-            # Ainda registramos o valor original no histórico para referência
-            price_history_manager.add_price(market_hash_name, price)
-            return existing_price
-    
-    # Para valores dentro da faixa esperada ou sem histórico, seguir com o processamento normal
-    # Adicionar o preço ao histórico
+    # Adicionar o preço ao histórico (para referência futura)
     price_history_manager.add_price(market_hash_name, price)
     
-    # Obter o preço limpo baseado no histórico (filtragem estatística)
-    clean_price = price_history_manager.get_clean_price(market_hash_name)
-    
-    # Se não temos dados históricos suficientes, usar o preço atual
-    if clean_price is None:
-        return price
-    
-    # Limitar a diferença máxima entre o preço atual e o preço histórico
-    # para evitar mudanças drásticas mesmo após filtragem
-    if clean_price > price * 2:  # Se o preço filtrado for mais que 2x o preço atual
-        print(f"Limitando aumento desproporcional para {market_hash_name}: {price:.2f} -> {clean_price:.2f}")
-        return price * 2  # Limitar a 200% do preço atual
-    
-    if clean_price < price / 2:  # Se o preço filtrado for menos que 50% do preço atual
-        print(f"Limitando queda desproporcional para {market_hash_name}: {price:.2f} -> {clean_price:.2f}")
-        return price / 2  # Limitar a 50% do preço atual
-    
-    # Mostrar informação de debug se o preço mudou significativamente
-    if abs(clean_price - price) / price > 0.2:  # Diferença > 20%
-        print(f"Correção de preço para {market_hash_name}: {price:.2f} -> {clean_price:.2f}")
-    
-    return clean_price
+    # Não aplicar limites por categoria nem filtragem de preços
+    # Retornar diretamente o preço obtido
+    return price
 
 
 def classify_item_for_price_range(market_hash_name: str) -> tuple:
@@ -410,92 +370,92 @@ def classify_item_for_price_range(market_hash_name: str) -> tuple:
     """
     market_hash_name_lower = market_hash_name.lower()
     
-    # Mapeamento de categorias de itens para faixas de preço (min, max) em reais
-    # Usando categorias mais amplas em vez de itens específicos
+    # Mapeamento de categorias de itens para faixas de preço (min, max) em USD
+    # NOTA: Valores convertidos de BRL para USD (divididos por ~5)
     categories = [
         # Categoria: Facas
         {
             "category": "knife",
             "keywords": ["★ ", "knife", "karambit", "bayonet", "butterfly", "daggers", "shadow daggers", "falchion", "huntsman", "bowie", "ursus", "stiletto", "navaja", "talon", "classic knife", "skeleton knife", "paracord knife", "survival knife", "nomad knife"],
-            "price_range": (300.0, 15000.0)
+            "price_range": (60.0, 3000.0)
         },
         # Categoria: Luvas
         {
             "category": "gloves",
             "keywords": ["★ gloves", "★ hand", "sport gloves", "driver gloves", "specialist gloves", "moto gloves", "bloodhound gloves", "hydra gloves", "broken fang gloves"],
-            "price_range": (300.0, 5000.0)
+            "price_range": (60.0, 1000.0)
         },
         # Categoria: AWP
         {
             "category": "awp",
             "keywords": ["awp"],
-            "price_range": (5.0, 15000.0)  # Faixa ampla para cobrir de skins comuns até Dragon Lore/Gungnir
+            "price_range": (1.0, 3000.0)  # Faixa ampla para cobrir de skins comuns até Dragon Lore/Gungnir
         },
         # Categoria: Rifles populares
         {
             "category": "rifles",
             "keywords": ["ak-47", "m4a4", "m4a1-s", "sg 553", "aug", "famas", "galil", "ssg 08"],
-            "price_range": (2.0, 8000.0)  # Faixa ampla para cobrir de skins comuns até Howl/Fire Serpent
+            "price_range": (0.5, 1600.0)  # Faixa ampla para cobrir de skins comuns até Howl/Fire Serpent
         },
         # Categoria: Pistolas
         {
             "category": "pistols",
             "keywords": ["deagle", "desert eagle", "usp-s", "glock", "p250", "five-seven", "tec-9", "p2000", "cz75", "r8 revolver", "dual berettas"],
-            "price_range": (1.0, 500.0)
+            "price_range": (0.2, 100.0)
         },
         # Categoria: Submetralhadoras
         {
             "category": "smgs",
             "keywords": ["mp5", "mp7", "mp9", "mac-10", "ump-45", "pp-bizon", "p90"],
-            "price_range": (1.0, 200.0)
+            "price_range": (0.2, 40.0)
         },
         # Categoria: Escopetas
         {
             "category": "shotguns",
             "keywords": ["nova", "xm1014", "mag-7", "sawed-off"],
-            "price_range": (1.0, 200.0)
+            "price_range": (0.2, 40.0)
         },
         # Categoria: Metralhadoras
         {
             "category": "machine_guns",
             "keywords": ["m249", "negev"],
-            "price_range": (1.0, 150.0)
+            "price_range": (0.2, 30.0)
         },
         # Categoria: Caixas
         {
             "category": "cases",
             "keywords": ["case", "caixa"],
-            "price_range": (0.5, 50.0)
+            "price_range": (0.1, 10.0)
         },
         # Categoria: Adesivos
         {
             "category": "stickers",
             "keywords": ["sticker", "adesivo"],
-            "price_range": (0.5, 1000.0)  # Alguns adesivos raros podem ser valiosos
+            "price_range": (0.1, 200.0)  # Alguns adesivos raros podem ser valiosos
         },
         # Categoria: Agentes
         {
             "category": "agents",
             "keywords": ["agent", "agente", "operator", "soldier", "saidan", "chef", "enforcer", "muhlik"],
-            "price_range": (5.0, 100.0)
+            "price_range": (1.0, 20.0)
         },
         # Categoria: Patches e Pins
         {
             "category": "patches_pins",
             "keywords": ["patch", "pin"],
-            "price_range": (1.0, 50.0)
+            "price_range": (0.2, 10.0)
         },
         # Categoria: Grafite
         {
             "category": "graffiti",
             "keywords": ["graffiti", "spray"],
-            "price_range": (0.5, 10.0)
+            "price_range": (0.1, 2.0)
         },
         # Categoria: Música
         {
             "category": "music",
             "keywords": ["music kit", "kit de música"],
-            "price_range": (1.0, 30.0)
+            "price_range": (0.2, 6.0)
         }
     ]
     

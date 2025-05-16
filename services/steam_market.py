@@ -79,7 +79,8 @@ def sleep_between_requests(min_delay=STEAM_REQUEST_DELAY):
 
 def convert_currency(price: float, from_currency: str, to_currency: str = 'BRL') -> float:
     """
-    Converte um preço de uma moeda para outra.
+    DESATIVADA: Esta função foi desativada para evitar dupla conversão.
+    Todos os preços agora são retornados na moeda original (USD) e a conversão é feita apenas no frontend.
     
     Args:
         price: Preço a ser convertido
@@ -87,36 +88,17 @@ def convert_currency(price: float, from_currency: str, to_currency: str = 'BRL')
         to_currency: Moeda de destino (padrão: 'BRL')
         
     Returns:
-        Preço convertido
+        Preço sem conversão (original)
     """
-    if from_currency == to_currency:
-        return price
-    
-    # TODO: Implementar um sistema para buscar taxas de câmbio atualizadas de uma API externa
-    # Por enquanto, usando taxas aproximadas que devem ser atualizadas periodicamente
-    
-    # Taxas de conversão - ATUALIZE REGULARMENTE!
-    # Última atualização: 21/06/2024
-    conversion_rates = {
-        'USD_to_BRL': 5.47,  # 1 USD = 5.47 BRL
-        'EUR_to_BRL': 5.85,  # 1 EUR = 5.85 BRL
-    }
-    
-    conversion_key = f"{from_currency}_to_{to_currency}"
-    if conversion_key in conversion_rates:
-        converted_price = price * conversion_rates[conversion_key]
-        print(f"Convertendo {price:.2f} {from_currency} para {converted_price:.2f} {to_currency}")
-        print("Aviso: Usando taxa de conversão fixa. Considere atualizar regularmente.")
-        return converted_price
-    
-    # Se não encontrar taxa de conversão, retornar preço original
-    print(f"AVISO: Não foi possível converter de {from_currency} para {to_currency}")
+    # Sempre retornar o preço original sem conversão
+    print(f"AVISO: Tentativa de conversão de moeda no backend ({from_currency} para {to_currency}) foi desativada.")
+    print(f"A conversão de moeda agora é feita apenas no frontend.")
     return price
 
 
 def extract_price_from_text(price_text: str, currency_code: int = STEAM_MARKET_CURRENCY) -> Optional[Dict]:
     """
-    Extrai o valor numérico de um texto de preço.
+    Extrai o valor numérico de um texto de preço sem aplicar limites ou ajustes.
     
     Args:
         price_text: Texto contendo o preço (ex: "R$ 10,25", "$5.99")
@@ -169,55 +151,7 @@ def extract_price_from_text(price_text: str, currency_code: int = STEAM_MARKET_C
         # Converter para float
         price = float(cleaned_text)
         
-        # Não realizar conversão aqui, apenas retornar o valor e moeda original
-        
-        # CORREÇÃO: Verificação adicional para valores absurdos
-        # Se o valor for extremamente alto para o tipo de item, provavelmente é um erro
-        
-        # Definir limites máximos razoáveis para categorias de itens (em vez de itens específicos)
-        max_limits = {
-            "Agent": 50.0,             # Todos os tipos de agentes/personagens
-            "Sticker": 100.0,          # Categoria geral de adesivos
-            "Adesivo": 100.0,          # Versão em português
-            "Pistol": 150.0,           # Pistolas como categoria
-            "Rifle": 500.0,            # Rifles como categoria
-            "Case": 30.0,              # Caixas como categoria
-            "Caixa": 30.0,             # Versão em português
-            "Graffiti": 10.0,          # Grafites como categoria
-            "Spray": 10.0,             # Versão em português
-            "Knife": 15000.0,          # Facas como categoria
-            "Gloves": 5000.0           # Luvas como categoria
-        }
-        
-        # Verificar se o preço excede o limite para o tipo de item
-        for item_type, max_limit in max_limits.items():
-            if item_type.lower() in price_text.lower() and price > max_limit:
-                print(f"AVISO: Valor extremamente alto detectado: {price} de '{price_text}' para categoria {item_type}. Ajustando para máximo razoável: {max_limit}")
-                return {
-                    "price": max_limit,
-                    "currency": original_currency,
-                    "adjusted": True
-                }
-                
-        # Verificação geral para itens não identificados
-        # Itens muito caros: facas, luvas, skins raras
-        if "★" in price_text and price > 5000.0:
-            print(f"AVISO: Valor alto para item especial: {price} de '{price_text}'. Permitido por ter símbolo ★")
-            return {
-                "price": price,
-                "currency": original_currency,
-                "special": True
-            }
-            
-        # Para itens comuns não identificados com preços absurdos
-        if price > 350.0 and not any(special in price_text for special in ["★", "Covert", "Red", "Knife", "Glove", "Dragon", "Howl", "Fire Serpent"]):
-            print(f"AVISO: Valor possivelmente incorreto: {price} de '{price_text}'. Ajustando para valor razoável: 50.0")
-            return {
-                "price": 50.0,
-                "currency": original_currency,
-                "adjusted": True
-            }
-            
+        # Retornar preço e moeda sem validações ou ajustes
         return {
             "price": price,
             "currency": original_currency
@@ -547,10 +481,6 @@ def get_item_price(market_hash_name: str, currency: int = None, appid: int = Non
         price_cache[cache_key] = price_data
         return price_data
     
-    # Classificar o item em categorias para determinar limites de preço razoáveis
-    item_category, price_limit = classify_item_and_get_price_limit(market_hash_name)
-    print(f"Item {market_hash_name} classificado como: {item_category} (Limite de referência: R$ {price_limit:.2f})")
-    
     # Buscar preço via scraping
     try:
         print(f"Buscando preço via scraping para {market_hash_name}")
@@ -563,7 +493,7 @@ def get_item_price(market_hash_name: str, currency: int = None, appid: int = Non
         # Registrar que o scraping foi feito para este item
         update_last_scrape_time(market_hash_name, currency, appid)
         
-        # Processar o preço obtido usando o sistema que inclui histórico e correções estatísticas
+        # Processar o preço obtido (sem aplicar limites ou filtragem)
         processed_price = process_scraped_price(market_hash_name, price_data["price"])
         
         # Verificar se o processamento retornou um preço válido
