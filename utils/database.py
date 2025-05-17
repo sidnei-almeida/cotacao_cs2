@@ -28,7 +28,8 @@ DB_PASSWORD = os.environ.get('DB_PASSWORD', 'nGFueZUdBGYipIfpFrxicixchLSgsShM')
 # Cache em memória para modo de fallback
 in_memory_db = {
     'skin_prices': {},
-    'metadata': {}
+    'metadata': {},
+    'case_prices': {}  # Adicionado para armazenar caixas em memória
 }
 db_lock = threading.Lock()
 DB_AVAILABLE = False  # Flag para indicar se o banco de dados está disponível
@@ -143,6 +144,27 @@ def init_db():
             cursor.execute('''
             CREATE INDEX IF NOT EXISTS idx_skin_prices_market_hash_name
             ON skin_prices(market_hash_name)
+            ''')
+            
+            # NOVA TABELA: Tabela para armazenar preços e conteúdos de caixas
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS case_prices (
+                id SERIAL PRIMARY KEY,
+                case_name TEXT NOT NULL,
+                market_hash_name TEXT NOT NULL,
+                price REAL NOT NULL,
+                image_url TEXT,
+                items_json TEXT,
+                last_updated TIMESTAMP NOT NULL,
+                update_count INTEGER DEFAULT 1,
+                UNIQUE(market_hash_name)
+            )
+            ''')
+            
+            # Índice para buscas rápidas por case_name
+            cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_case_prices_case_name
+            ON case_prices(case_name)
             ''')
             
             conn.commit()
@@ -511,4 +533,287 @@ def _get_stats_from_memory() -> Dict:
             'last_update': last_update.isoformat() if last_update else None,
             'database_type': 'Memory',
             'mode': 'FALLBACK'
-        } 
+        }
+
+def save_case_price(case_name: str, market_hash_name: str, price: float, image_url: str = None, items_json: str = None):
+    """
+    Salva ou atualiza o preço e conteúdo de uma caixa no banco de dados.
+    
+    Args:
+        case_name: Nome da caixa
+        market_hash_name: Nome formatado da caixa para o mercado
+        price: Preço atual da caixa
+        image_url: URL da imagem da caixa
+        items_json: JSON dos itens contidos na caixa
+    """
+    now = datetime.now()
+    
+    # Sempre salva no cache em memória
+    key = market_hash_name
+    with db_lock:
+        in_memory_db['case_prices'][key] = {
+            'case_name': case_name,
+            'market_hash_name': market_hash_name,
+            'price': price,
+            'image_url': image_url,
+            'items_json': items_json,
+            'last_updated': now,
+            'update_count': 1
+        }
+    
+    # Se o banco estiver disponível, tenta salvar nele também
+    if DB_AVAILABLE:
+        try:
+            conn = get_db_connection()
+            if not conn:
+                return
+                
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
+            
+            # Verificar se o item já existe
+            cursor.execute('''
+            SELECT id, update_count FROM case_prices
+            WHERE market_hash_name = %s
+            ''', (market_hash_name,))
+            
+            result = cursor.fetchone()
+            
+            if result:
+                # Atualizar item existente
+                cursor.execute('''
+                UPDATE case_prices
+                SET case_name = %s, price = %s, image_url = %s, items_json = %s, 
+                    last_updated = %s, update_count = update_count + 1
+                WHERE id = %s
+                ''', (case_name, price, image_url, items_json, now, result['id']))
+            else:
+                # Inserir novo item
+                cursor.execute('''
+                INSERT INTO case_prices 
+                (case_name, market_hash_name, price, image_url, items_json, last_updated, update_count)
+                VALUES (%s, %s, %s, %s, %s, %s, 1)
+                ''', (case_name, market_hash_name, price, image_url, items_json, now))
+            
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            print(f"Erro ao salvar preço da caixa no banco de dados: {e}")
+            # Já está no cache em memória, então só registramos o erro
+
+def get_case_price(market_hash_name: str = None, case_name: str = None) -> Optional[Dict]:
+    """
+    Busca os detalhes de uma caixa no banco de dados.
+    
+    Args:
+        market_hash_name: Nome formatado da caixa para o mercado
+        case_name: Nome da caixa (alternativa para busca)
+        
+    Returns:
+        Dicionário com detalhes da caixa ou None se não encontrada
+    """
+    if not market_hash_name and not case_name:
+        return None
+    
+    if DB_AVAILABLE:
+        try:
+            conn = get_db_connection()
+            if not conn:
+                # Fallback para cache em memória
+                return _get_case_price_from_memory(market_hash_name, case_name)
+                
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
+            
+            if market_hash_name:
+                cursor.execute('''
+                SELECT * FROM case_prices
+                WHERE market_hash_name = %s
+                ''', (market_hash_name,))
+            else:
+                cursor.execute('''
+                SELECT * FROM case_prices
+                WHERE case_name = %s
+                ''', (case_name,))
+            
+            result = cursor.fetchone()
+            conn.close()
+            
+            if result:
+                # Converter itens_json para Python
+                if result['items_json']:
+                    try:
+                        result['items'] = json.loads(result['items_json'])
+                    except:
+                        result['items'] = []
+                else:
+                    result['items'] = []
+                
+                # Remover campo JSON original
+                result.pop('items_json', None)
+                
+                return dict(result)
+            
+            return None
+        except Exception as e:
+            print(f"Erro ao obter preço da caixa do banco: {e}")
+            # Fallback para cache em memória
+            return _get_case_price_from_memory(market_hash_name, case_name)
+    else:
+        # Usar cache em memória quando o banco não está disponível
+        return _get_case_price_from_memory(market_hash_name, case_name)
+
+def _get_case_price_from_memory(market_hash_name: str = None, case_name: str = None) -> Optional[Dict]:
+    """Obtém os detalhes da caixa do cache em memória"""
+    with db_lock:
+        if market_hash_name:
+            if market_hash_name in in_memory_db['case_prices']:
+                result = in_memory_db['case_prices'][market_hash_name].copy()
+                
+                # Converter itens_json para Python
+                if result.get('items_json'):
+                    try:
+                        result['items'] = json.loads(result['items_json'])
+                    except:
+                        result['items'] = []
+                else:
+                    result['items'] = []
+                
+                # Remover campo JSON original
+                result.pop('items_json', None)
+                
+                return result
+        elif case_name:
+            # Buscar por nome da caixa
+            for key, item in in_memory_db['case_prices'].items():
+                if item['case_name'] == case_name:
+                    result = item.copy()
+                    
+                    # Converter itens_json para Python
+                    if result.get('items_json'):
+                        try:
+                            result['items'] = json.loads(result['items_json'])
+                        except:
+                            result['items'] = []
+                    else:
+                        result['items'] = []
+                    
+                    # Remover campo JSON original
+                    result.pop('items_json', None)
+                    
+                    return result
+    
+    return None
+
+def get_all_cases(limit: int = 100) -> List[Dict]:
+    """
+    Retorna a lista de todas as caixas disponíveis.
+    
+    Args:
+        limit: Limite de resultados
+        
+    Returns:
+        Lista de dicionários com informações básicas das caixas
+    """
+    if DB_AVAILABLE:
+        try:
+            conn = get_db_connection()
+            if not conn:
+                return _get_all_cases_from_memory(limit)
+                
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
+            
+            cursor.execute('''
+            SELECT id, case_name, market_hash_name, price, image_url, last_updated
+            FROM case_prices
+            ORDER BY case_name ASC
+            LIMIT %s
+            ''', (limit,))
+            
+            results = cursor.fetchall()
+            conn.close()
+            
+            return list(results)
+        except Exception as e:
+            print(f"Erro ao obter lista de caixas do banco: {e}")
+            return _get_all_cases_from_memory(limit)
+    else:
+        return _get_all_cases_from_memory(limit)
+
+def _get_all_cases_from_memory(limit: int = 100) -> List[Dict]:
+    """Obtém a lista de caixas do cache em memória"""
+    results = []
+    
+    with db_lock:
+        for key, item in in_memory_db['case_prices'].items():
+            # Incluir apenas campos básicos
+            results.append({
+                'case_name': item['case_name'],
+                'market_hash_name': item['market_hash_name'],
+                'price': item['price'],
+                'image_url': item.get('image_url'),
+                'last_updated': item['last_updated']
+            })
+            
+            if len(results) >= limit:
+                break
+    
+    # Ordenar por nome
+    results.sort(key=lambda x: x['case_name'])
+    return results
+
+def get_outdated_cases(days: int = 1, limit: int = 50) -> List[Dict]:
+    """
+    Retorna uma lista de caixas com preços desatualizados.
+    
+    Args:
+        days: Número de dias para considerar um preço desatualizado
+        limit: Limite de registros a retornar
+        
+    Returns:
+        Lista de dicionários com informações das caixas desatualizadas
+    """
+    if DB_AVAILABLE:
+        try:
+            outdated_date = datetime.now() - timedelta(days=days)
+            conn = get_db_connection()
+            if not conn:
+                return _get_outdated_cases_from_memory(days, limit)
+                
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
+            
+            cursor.execute('''
+            SELECT id, case_name, market_hash_name, price, last_updated
+            FROM case_prices
+            WHERE last_updated < %s
+            ORDER BY last_updated ASC
+            LIMIT %s
+            ''', (outdated_date, limit))
+            
+            results = cursor.fetchall()
+            conn.close()
+            
+            return list(results)
+        except Exception as e:
+            print(f"Erro ao obter caixas desatualizadas do banco: {e}")
+            return _get_outdated_cases_from_memory(days, limit)
+    else:
+        return _get_outdated_cases_from_memory(days, limit)
+
+def _get_outdated_cases_from_memory(days: int = 1, limit: int = 50) -> List[Dict]:
+    """Obtém caixas desatualizadas do cache em memória"""
+    outdated_date = datetime.now() - timedelta(days=days)
+    results = []
+    
+    with db_lock:
+        for key, item in in_memory_db['case_prices'].items():
+            if item['last_updated'] < outdated_date:
+                results.append({
+                    'case_name': item['case_name'],
+                    'market_hash_name': item['market_hash_name'],
+                    'price': item['price'],
+                    'last_updated': item['last_updated']
+                })
+                
+                if len(results) >= limit:
+                    break
+    
+    return results 
