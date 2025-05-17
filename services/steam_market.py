@@ -436,22 +436,288 @@ def get_item_price_via_scraping(market_hash_name: str, appid: int = STEAM_APPID,
     raise Exception(f"Não foi possível obter o preço para {market_hash_name}")
 
 
+def get_item_price_via_csgostash(market_hash_name: str, currency: int = STEAM_MARKET_CURRENCY) -> Optional[Dict]:
+    """
+    Obtém o preço de um item através de scraping do CSGOSkins.gg.
+    Mais estável e menos propenso a bloqueios que o scraping direto da Steam.
+    
+    Args:
+        market_hash_name: Nome do item formatado para o mercado
+        currency: Código da moeda (não utilizado diretamente, site usa localização do navegador)
+        
+    Returns:
+        Dicionário com preço e moeda do item, ou None se falhar
+    """
+    # Verificar se estamos lidando com StatTrak
+    is_stattrak = "StatTrak" in market_hash_name
+    
+    # Extrair o nome base do item e sua condição
+    # Remover o prefixo "StatTrak™ " se existir
+    cleaned_name = market_hash_name.replace("StatTrak™ ", "")
+    
+    # Separar o nome base da condição (Field-Tested, Well-Worn, etc.)
+    base_parts = cleaned_name.split(" (")
+    base_name = base_parts[0].strip()
+    condition = ""
+    if len(base_parts) > 1:
+        condition = base_parts[1].replace(")", "").strip()
+    
+    # Transformar o nome base para o formato do CSGOSkins.gg
+    # Exemplo: "AK-47 | Asiimov" -> "ak-47-asiimov"
+    formatted_name = base_name.lower()
+    formatted_name = formatted_name.replace(" | ", "-")
+    formatted_name = formatted_name.replace(" ", "-")
+    formatted_name = re.sub(r'[^\w\-]', '', formatted_name)
+    
+    # Construir URL do CSGOSkins.gg
+    url = f"https://csgoskins.gg/items/{formatted_name}"
+    
+    print(f"DEBUGGING: Obtendo preço para '{market_hash_name}' via CSGOSkins.gg")
+    print(f"DEBUGGING: URL de consulta: {url}")
+    print(f"DEBUGGING: Condição: {condition}, StatTrak: {is_stattrak}")
+
+    # Aguardar tempo entre requisições
+    sleep_between_requests()
+    
+    # Usar o User-Agent de iPhone que funcionou nos testes
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1',
+        'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',  # Definir português para obter preços em BRL
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        'Cache-Control': 'no-cache',
+        'Referer': 'https://www.google.com/'
+    }
+    
+    # Mapeamento de nomes de condições para termos de busca
+    condition_keywords = {
+        "Factory New": ["factory new", "fn", "new"],
+        "Minimal Wear": ["minimal wear", "mw", "minimal"],
+        "Field-Tested": ["field-tested", "ft", "field"],
+        "Well-Worn": ["well-worn", "ww", "well"],
+        "Battle-Scarred": ["battle-scarred", "bs", "scarred", "battle"]
+    }
+    
+    try:
+        # Tentar obter a página
+        response = requests.get(url, headers=headers, timeout=30)
+        
+        if response.status_code == 200:
+            # Processar HTML com selectolax
+            parser = HTMLParser(response.text)
+            
+            # Verificar se obtivemos o título correto para garantir que a página foi carregada adequadamente
+            title = parser.css_first('title')
+            if title and market_hash_name.split(" (")[0].lower() in title.text().lower():
+                print(f"DEBUGGING: Título da página encontrado: {title.text()}")
+            else:
+                print("DEBUGGING: Título da página não encontrado ou não corresponde ao item")
+                if title:
+                    print(f"DEBUGGING: Título encontrado: {title.text()}")
+            
+            # Extrair texto HTML completo para análise
+            all_text = parser.body.text() if parser.body else ""
+            
+            # Obter todos os preços genéricos
+            general_price_pattern = r'(\$|R\$|€|£|¥)\s*([0-9.,]+)'
+            general_prices = re.findall(general_price_pattern, all_text)
+            
+            print(f"DEBUGGING: Encontrados {len(general_prices)} preços genéricos")
+            
+            # Se temos uma condição específica, tentar encontrar preços relacionados à ela
+            condition_matches = []
+            stattrak_matches = []
+            
+            if condition:
+                # Buscar termos relacionados à condição específica
+                search_terms = condition_keywords.get(condition, [condition.lower()])
+                
+                # Para cada preço, analisar o texto ao redor para verificar se está relacionado à condição
+                for i, (symbol, price_text) in enumerate(general_prices):
+                    # Pegar contexto de até 200 caracteres antes e depois do preço
+                    price_pos = all_text.find(f"{symbol}{price_text}")
+                    if price_pos > 0:
+                        start_pos = max(0, price_pos - 200)
+                        end_pos = min(len(all_text), price_pos + 200)
+                        context = all_text[start_pos:end_pos].lower()
+                        
+                        # Verificar se algum termo da condição está no contexto
+                        condition_match = any(term in context for term in search_terms)
+                        
+                        # Para StatTrak, verificar se há menção no contexto
+                        stattrak_match = "stattrak" in context if is_stattrak else True
+                        
+                        if condition_match:
+                            condition_matches.append((i, symbol, price_text, stattrak_match))
+                            if stattrak_match:
+                                stattrak_matches.append((i, symbol, price_text))
+                
+                print(f"DEBUGGING: Encontrados {len(condition_matches)} preços relacionados à condição '{condition}'")
+                if is_stattrak:
+                    print(f"DEBUGGING: Destes, {len(stattrak_matches)} também mencionam StatTrak")
+            
+            # Processar os preços encontrados
+            price_data = None
+            
+            # Caso 1: Se temos preços específicos para condição e StatTrak
+            if is_stattrak and stattrak_matches:
+                # Usar o primeiro preço que corresponde à condição e StatTrak
+                _, symbol, price_text = stattrak_matches[0]
+                print(f"DEBUGGING: Usando preço específico para StatTrak + {condition}: {symbol}{price_text}")
+                price_data = _process_price(symbol, price_text)
+                
+            # Caso 2: Se temos preços específicos para a condição (sem StatTrak ou não é StatTrak)
+            elif condition_matches:
+                # Usar o primeiro preço que corresponde à condição
+                _, symbol, price_text, _ = condition_matches[0]
+                print(f"DEBUGGING: Usando preço específico para condição {condition}: {symbol}{price_text}")
+                price_data = _process_price(symbol, price_text)
+                
+            # Caso 3: Se não encontramos preços específicos, usar estimativa baseada em padrões
+            elif general_prices:
+                # Para itens StatTrak, tentar identificar preços mais altos (StatTrak geralmente custa mais)
+                if is_stattrak:
+                    # Converter todos os preços para valores numéricos
+                    numeric_prices = []
+                    for symbol, price_text in general_prices:
+                        try:
+                            if symbol == 'R$':
+                                price_value = float(price_text.replace('.', '').replace(',', '.'))
+                            else:
+                                price_value = float(price_text.replace(',', ''))
+                            numeric_prices.append((symbol, price_value))
+                        except ValueError:
+                            continue
+                    
+                    # Ordenar preços (maior para menor)
+                    numeric_prices.sort(key=lambda x: x[1], reverse=True)
+                    
+                    # StatTrak geralmente custa mais, usar um dos preços mais altos
+                    if numeric_prices:
+                        # Usar o terceiro maior preço para ser conservador
+                        index = min(2, len(numeric_prices)-1)
+                        symbol, price_value = numeric_prices[index]
+                        print(f"DEBUGGING: Usando preço estimado para StatTrak (3º maior): {symbol}{price_value:.2f}")
+                        price_data = {
+                            "price": price_value,
+                            "currency": _get_currency_from_symbol(symbol),
+                            "source": "csgoskins.gg",
+                            "estimated": True
+                        }
+                else:
+                    # Converter todos os preços para valores numéricos e filtrar valores claramente inválidos
+                    numeric_prices = []
+                    for symbol, price_text in general_prices:
+                        try:
+                            if symbol == 'R$':
+                                price_value = float(price_text.replace('.', '').replace(',', '.'))
+                            else:
+                                price_value = float(price_text.replace(',', ''))
+                            
+                            # Filtrar valores muito altos ou muito baixos
+                            if 0.1 <= price_value <= 5000:
+                                numeric_prices.append((symbol, price_value))
+                        except ValueError:
+                            continue
+                    
+                    # Ordenar preços (menor para maior)
+                    numeric_prices.sort(key=lambda x: x[1])
+                    
+                    if numeric_prices:
+                        # Encontrar a posição média com base na condição
+                        condition_ranks = {
+                            "Factory New": 0.8,  # Usar preço próximo ao mais alto
+                            "Minimal Wear": 0.6,  # Um pouco acima da média
+                            "Field-Tested": 0.4,  # Na média
+                            "Well-Worn": 0.2,  # Abaixo da média
+                            "Battle-Scarred": 0.1  # Próximo ao mais baixo
+                        }
+                        
+                        # Obter o rank, com padrão para Field-Tested se a condição não for conhecida
+                        rank = condition_ranks.get(condition, 0.4)
+                        
+                        # Calcular a posição com base no rank
+                        index = min(int(len(numeric_prices) * rank), len(numeric_prices) - 1)
+                        symbol, price_value = numeric_prices[index]
+                        
+                        print(f"DEBUGGING: Usando preço estimado para {condition or 'condição desconhecida'}: {symbol}{price_value:.2f} (rank {rank}, índice {index})")
+                        price_data = {
+                            "price": price_value,
+                            "currency": _get_currency_from_symbol(symbol),
+                            "source": "csgoskins.gg",
+                            "estimated": True
+                        }
+                    
+            # Se encontramos um preço, retornar
+            if price_data:
+                return price_data
+            
+            print(f"DEBUGGING: Nenhum preço adequado encontrado para {market_hash_name} no CSGOSkins.gg")
+        else:
+            print(f"DEBUGGING: Erro ao acessar CSGOSkins.gg: Status {response.status_code}")
+    
+    except Exception as e:
+        print(f"DEBUGGING: Erro durante scraping do CSGOSkins.gg para {market_hash_name}: {e}")
+        import traceback
+        traceback.print_exc()
+    
+    # Se tudo falhar, tentar Fallback para o método anterior
+    print(f"DEBUGGING: Tentando fallback para método de scraping direto da Steam")
+    try:
+        return get_item_price_via_scraping(market_hash_name, STEAM_APPID, currency)
+    except Exception as e:
+        print(f"DEBUGGING: Fallback também falhou: {e}")
+    
+    return None
+
+# Função auxiliar para processar o preço com base no símbolo e texto
+def _process_price(symbol: str, price_text: str) -> Dict:
+    """Converte texto do preço para um dicionário com preço e moeda."""
+    try:
+        if symbol == 'R$':
+            # Formato brasileiro: R$ 10,50
+            price_value = float(price_text.replace('.', '').replace(',', '.'))
+        else:
+            # Formato internacional: $10.50
+            price_value = float(price_text.replace(',', ''))
+        
+        return {
+            "price": price_value,
+            "currency": _get_currency_from_symbol(symbol),
+            "source": "csgoskins.gg"
+        }
+    except ValueError:
+        print(f"DEBUGGING: Não foi possível converter o valor '{price_text}' para float")
+        return None
+
+# Função auxiliar para obter o código da moeda a partir do símbolo
+def _get_currency_from_symbol(symbol: str) -> str:
+    """Retorna o código da moeda a partir do símbolo."""
+    currency_map = {
+        '$': 'USD',
+        'R$': 'BRL',
+        '€': 'EUR',
+        '£': 'GBP',
+        '¥': 'CNY'
+    }
+    return currency_map.get(symbol, 'USD')
+
+
 def get_item_price(market_hash_name: str, currency: int = None, appid: int = None) -> Dict:
     """
-    Obtém o preço atual de um item no Steam Market.
+    Obtém o preço atual de um item no mercado.
     Primeiro verifica no banco de dados SQLite, e se não encontrar ou estiver desatualizado,
-    usa o método de scraping e salva o resultado no banco.
+    usa o método de scraping do CSGOStash e salva o resultado no banco.
     
     Args:
         market_hash_name: Nome formatado do item para o mercado
         currency: Código da moeda (padrão definido em configuração)
-        appid: ID da aplicação na Steam (padrão definido em configuração)
+        appid: ID da aplicação na Steam (não utilizado em scraping do CSGOStash)
         
     Returns:
         Dicionário com o preço, a moeda e outras informações do item
         
     Raises:
-        Exception: Se não for possível obter o preço atual do mercado Steam
+        Exception: Se não for possível obter o preço atual do CSGOStash
     """
     if currency is None:
         currency = STEAM_MARKET_CURRENCY
@@ -478,14 +744,14 @@ def get_item_price(market_hash_name: str, currency: int = None, appid: int = Non
         price_cache[cache_key] = price_data
         return price_data
     
-    # Buscar preço via scraping
+    # Buscar preço via scraping do CSGOStash em vez do Steam
     try:
-        print(f"Buscando preço via scraping para {market_hash_name}")
-        price_data = get_item_price_via_scraping(market_hash_name, appid, currency)
+        print(f"Buscando preço via CSGOStash para {market_hash_name}")
+        price_data = get_item_price_via_csgostash(market_hash_name, currency)
         
         # Verificar se o scraping retornou dados válidos
         if not price_data or price_data.get("price", 0) <= 0:
-            raise Exception(f"Não foi possível obter o preço atual de {market_hash_name} no mercado Steam")
+            raise Exception(f"Não foi possível obter o preço atual de {market_hash_name} no CSGOStash")
         
         # Registrar que o scraping foi feito para este item
         update_last_scrape_time(market_hash_name, currency, appid)
@@ -701,7 +967,7 @@ def get_api_status() -> Dict[str, Any]:
             "maxsize": price_cache.maxsize,
             "ttl_seconds": price_cache.ttl
         },
-        "pricing_method": "web_scraping_only"  # Indicar que apenas o scraping é usado para preços
+        "pricing_method": "csgostash_scraping"  # Atualizado para refletir o uso do CSGOStash
     }
     
     # Testar sistema de scraping com um item comum
@@ -715,7 +981,7 @@ def get_api_status() -> Dict[str, Any]:
             
         # Testa o scraping
         start_time = time.time()
-        price = get_item_price_via_scraping(test_item, STEAM_APPID, STEAM_MARKET_CURRENCY)
+        price = get_item_price_via_csgostash(test_item, STEAM_MARKET_CURRENCY)
         end_time = time.time()
         
         result["scraping_test"] = price is not None
@@ -724,11 +990,12 @@ def get_api_status() -> Dict[str, Any]:
             result["scraping_test_response"] = {
                 "item": test_item,
                 "price": price,
-                "time_taken_ms": round((end_time - start_time) * 1000)
+                "time_taken_ms": round((end_time - start_time) * 1000),
+                "source": "csgostash"
             }
         
     except Exception as e:
-        print(f"Erro ao testar sistema de scraping: {e}")
+        print(f"Erro ao testar sistema de scraping CSGOStash: {e}")
         result["scraping_error"] = str(e)
     
     # Testar conexão com API oficial da Steam (somente para fins de diagnóstico)

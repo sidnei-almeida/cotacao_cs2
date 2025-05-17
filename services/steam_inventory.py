@@ -1,7 +1,10 @@
 import requests
 import json
 import time
-from typing import Dict, List, Any, Optional
+import re
+import struct
+import base64
+from typing import Dict, List, Any, Optional, Tuple
 from services.steam_market import get_item_price, get_steam_api_data
 from utils.config import STEAM_API_KEY, STEAM_MARKET_CURRENCY, STEAM_APPID, STEAM_REQUEST_DELAY
 import os
@@ -13,13 +16,17 @@ load_dotenv()
 # URL base da API de inventário da Steam
 STEAM_INVENTORY_URL = "https://steamcommunity.com/inventory/{steamid}/730/2"
 
+# URL para obter valores float
+FLOAT_API_URL = "https://api.csgofloat.com/?url="
 
-def get_inventory_value(steamid: str) -> Dict[str, Any]:
+
+def get_inventory_value(steamid: str, categorize: bool = False) -> Dict[str, Any]:
     """
     Obtém o valor do inventário de CS2 de um usuário.
     
     Args:
         steamid: ID da Steam do usuário
+        categorize: Se True, categoriza os itens por tipo
         
     Returns:
         Dicionário com informações do inventário e valor total
@@ -36,6 +43,11 @@ def get_inventory_value(steamid: str) -> Dict[str, Any]:
     real_inventory = get_real_inventory(steamid)
     if real_inventory:
         print(f"Inventário completo obtido via endpoint público: {len(real_inventory.get('items', []))} itens encontrados")
+        
+        # Adicionar categorização se solicitado
+        if categorize:
+            real_inventory = categorize_inventory(real_inventory)
+            
         return real_inventory
     
     # Se falhar, tentar com a API oficial (se configurada)
@@ -44,6 +56,11 @@ def get_inventory_value(steamid: str) -> Dict[str, Any]:
         api_inventory = get_api_inventory(steamid)
         if api_inventory:
             print(f"Inventário completo obtido via API oficial: {len(api_inventory.get('items', []))} itens encontrados")
+            
+            # Adicionar categorização se solicitado
+            if categorize:
+                api_inventory = categorize_inventory(api_inventory)
+                
             return api_inventory
         print("Falha ao obter inventário via API oficial.")
     else:
@@ -53,7 +70,7 @@ def get_inventory_value(steamid: str) -> Dict[str, Any]:
     print(f"Não foi possível obter inventário para {steamid} ou o inventário está vazio")
     
     # Criar um inventário vazio válido
-    return {
+    empty_inventory = {
         "steamid": steamid,
         "total_items": 0,
         "total_value": 0.0,
@@ -67,6 +84,12 @@ def get_inventory_value(steamid: str) -> Dict[str, Any]:
         "average_item_value": 0.0,
         "note": "Inventário vazio ou não acessível"
     }
+    
+    # Adicionar categorização se solicitado
+    if categorize:
+        empty_inventory["items_by_category"] = {}
+        
+    return empty_inventory
 
 
 def get_api_inventory(steamid: str) -> Optional[Dict[str, Any]]:
@@ -283,13 +306,40 @@ def process_inventory_data(inventory_data: Dict[str, Any], steamid: str) -> Dict
                 # Item especial (StatTrak, Souvenir)
                 is_special = "StatTrak™" in name or "Souvenir" in name
                 
+                # Extrair URL de inspeção e obter valor float
+                inspect_url = extract_inspect_url(desc)
+                float_value = None
+                
+                # Só obter float para armas e facas (não para caixas, adesivos, etc.)
+                # Isso evita consultas desnecessárias à API
+                if inspect_url and not is_sticker and not is_storage_unit:
+                    # Verificar se é uma arma ou faca (que têm float)
+                    has_float = any(cat in type_info.lower() for cat in [
+                        "pistol", "rifle", "smg", "shotgun", "machinegun", 
+                        "sniper rifle", "knife", "★"
+                    ])
+                    
+                    if has_float:
+                        float_value = get_item_float(inspect_url)
+                        if float_value is not None:
+                            print(f"Float obtido para {market_hash_name}: {float_value:.10f}")
+                
                 # Obter preço do item
                 price = 0.0
                 if tradable:
                     try:
-                        price = get_item_price(market_hash_name)
+                        price_data = get_item_price(market_hash_name)
+                        if isinstance(price_data, dict):
+                            price = price_data.get("price", 0.0)
+                        else:
+                            price = float(price_data) if price_data else 0.0
+                            
                         if price > 0:
                             valuable_count += 1
+                            
+                            # Ajustar preço com base no float (para itens que têm)
+                            if float_value is not None:
+                                price = adjust_price_by_float(price, float_value, market_hash_name)
                     except Exception as e:
                         print(f"Erro ao obter preço para {market_hash_name}: {e}")
                 
@@ -320,7 +370,9 @@ def process_inventory_data(inventory_data: Dict[str, Any], steamid: str) -> Dict
                     "souvenir": "Souvenir" in name,
                     "is_sticker": is_sticker,
                     "image": get_item_image(desc),
-                    "source": "storage_unit" if is_storage_unit else "market"
+                    "source": "storage_unit" if is_storage_unit else "market",
+                    "inspect_url": inspect_url,  # Nova propriedade: URL de inspeção
+                    "float_value": float_value   # Nova propriedade: Valor float
                 }
                 
                 # Adicionar à categoria apropriada
@@ -341,9 +393,11 @@ def process_inventory_data(inventory_data: Dict[str, Any], steamid: str) -> Dict
                         "price": price,
                         "rarity": rarity,
                         "category": category,
-                        "source": "storage_unit" if is_storage_unit else "market"
+                        "source": "storage_unit" if is_storage_unit else "market",
+                        "float_value": float_value  # Adicionar float ao item mais valioso
                     }
-                    print(f"Novo item mais valioso encontrado: {name} - R$ {price:.2f}")
+                    print(f"Novo item mais valioso encontrado: {name} - R$ {price:.2f}" + 
+                          (f" (Float: {float_value:.10f})" if float_value is not None else ""))
                 
                 # Atualizar valor total
                 total_value += item_total
@@ -374,11 +428,13 @@ def process_inventory_data(inventory_data: Dict[str, Any], steamid: str) -> Dict
             "processed_count": processed_count,
             "valuable_items_count": valuable_count,
             "sticker_count": sticker_count,
-            "total_pages_processed": inventory_data.get("total_pages", 1)
+            "total_pages_processed": inventory_data.get("total_pages", 1),
+            "items_with_float": sum(1 for item in processed_items if item.get("float_value") is not None)
         }
         
         print(f"Processados {processed_count} itens, totalizando {result['total_items']} unidades, no valor de R$ {total_value:.2f}")
         print(f"Itens valiosos: {valuable_count}, Adesivos: {sticker_count}")
+        print(f"Itens com float obtido: {result['stats']['items_with_float']}")
         
     except Exception as e:
         print(f"Erro ao processar inventário: {e}")
@@ -497,169 +553,267 @@ def process_api_inventory_data(api_data: Dict[str, Any], steamid: str) -> Dict[s
         average_value = total_value / items_with_value if items_with_value > 0 else 0
         print(f"Valor médio por item: R$ {average_value:.2f}")
         
-        # Ordenar itens por valor (mais valiosos primeiro)
-        processed_items.sort(key=lambda x: x.get("price", 0), reverse=True)
-        
-        # Atualizar resultado
+        # Atualizar resultados
         result["items"] = processed_items
-        result["total_value"] = total_value
         result["total_items"] = len(processed_items)
+        result["total_value"] = total_value
         result["average_item_value"] = average_value
         result["most_valuable_item"] = most_valuable_item
         
-        if most_valuable_item:
-            print(f"Item mais valioso no resultado final: {most_valuable_item['name']} - R$ {most_valuable_item['price']:.2f}")
-        else:
-            print("AVISO: Nenhum item valioso encontrado no inventário!")
-        
     except Exception as e:
-        print(f"Erro ao processar dados da API oficial: {e}")
+        print(f"Erro ao processar inventário via API: {e}")
         import traceback
         traceback.print_exc()
-    
+        
     return result
 
 
 def parse_item_type(type_info: str, desc: Dict[str, Any]) -> tuple:
     """
-    Analisa o tipo do item para extrair categoria, raridade e exterior.
+    Extrai a categoria e o tipo do item com base em suas informações.
     
     Args:
-        type_info: String de tipo do item da Steam
-        desc: Dicionário de descrição do item
+        type_info: Texto do tipo do item
+        desc: Descrição completa do item
         
     Returns:
-        Tupla com (categoria, item_type)
+        Tupla (categoria, tipo)
     """
-    # Valores padrão
-    category = "Other"
-    item_type = "Normal"
+    category = "Outros"
+    item_type = type_info
     
-    # Determinar categoria
-    if "Rifle" in type_info:
-        category = "Rifle"
-    elif "Pistol" in type_info:
-        category = "Pistol"
-    elif "Sniper Rifle" in type_info:
-        category = "Sniper Rifle"
-    elif "SMG" in type_info:
-        category = "SMG"
-    elif "Shotgun" in type_info:
-        category = "Shotgun"
-    elif "Container" in type_info or "Case" in type_info:
-        category = "Container"
-    elif "Key" in type_info:
-        category = "Key"
-    elif "Knife" in type_info:
-        category = "Knife"
-    elif "Gloves" in type_info:
-        category = "Gloves"
-    
-    # Determinar raridade com base nas tags
-    if "tags" in desc:
-        for tag in desc["tags"]:
-            # Verificar categoria de raridade
-            if tag.get("category") == "Rarity":
-                item_type = tag.get("name", item_type)
-                
+    # A categoria geralmente está na primeira parte do type_info
+    parts = type_info.split()
+    if parts:
+        base_type = parts[0].lower()
+        
+        # Mapeamento de tipos para categorias
+        if base_type in ["pistol", "pistola"]:
+            category = "Pistolas"
+        elif base_type in ["rifle", "smg"]:
+            category = "Rifles"
+        elif base_type in ["knife", "★"]:
+            category = "Facas"
+        elif base_type in ["gloves", "luvas", "hand", "wraps"]:
+            category = "Luvas"
+        elif base_type in ["sticker", "adesivo"]:
+            category = "Adesivos"
+        elif base_type in ["case", "caixa"]:
+            category = "Caixas"
+        elif "key" in base_type or "chave" in base_type:
+            category = "Chaves"
+        elif "agent" in base_type or "agente" in base_type:
+            category = "Agentes"
+        elif "container" in base_type or "package" in base_type:
+            category = "Pacotes"
+        elif "pin" in base_type or "patch" in base_type:
+            category = "Souvenirs"
+            
+    # Verificar tags para extrair informações adicionais
+    tags = desc.get("tags", [])
+    for tag in tags:
+        if tag.get("category") == "Type":
+            item_type = tag.get("name", item_type)
+            
+            # Mapear categorias específicas
+            type_lower = item_type.lower()
+            if any(knife in type_lower for knife in ["knife", "facas", "★"]):
+                category = "Facas"
+            elif any(glove in type_lower for glove in ["gloves", "luvas", "hand", "wraps"]):
+                category = "Luvas"
+            
     return category, item_type
 
 
-def get_item_image(desc: Dict[str, Any]) -> str:
+def get_item_image(desc: Dict) -> str:
     """
-    Extrai a URL da imagem a partir da descrição do item.
+    Obtém a URL da imagem do item.
     
     Args:
-        desc: Dicionário com descrição do item
+        desc: Descrição do item
         
     Returns:
-        URL da imagem do item
+        URL da imagem
     """
-    image_url = desc.get("icon_url", "")
-    if image_url and not image_url.startswith("http"):
-        image_url = f"https://community.akamai.steamstatic.com/economy/image/{image_url}"
-    return image_url
+    # Imagens grandes têm prioridade
+    icon_url_large = desc.get("icon_url_large", "")
+    if icon_url_large:
+        return f"https://community.cloudflare.steamstatic.com/economy/image/{icon_url_large}"
+    
+    # Se não houver imagem grande, usar a normal
+    icon_url = desc.get("icon_url", "")
+    if icon_url:
+        return f"https://community.cloudflare.steamstatic.com/economy/image/{icon_url}"
+    
+    # Fallback: imagem padrão
+    return "https://community.cloudflare.steamstatic.com/economy/image/IzMF03bi9WpSBq-S-ekoE33L-iLqGFHVaU25ZzQNQcXdB2ozio1RrlIWFK3UfvMYB8UsvjiMXojflsZalyxSh31CIyHz2GZ-KuFpPsrTzBG0ouqID2fIYCPBLi6NBg06GPAZN2nB-zeo5ObGFz3BQewrFAsHf_UF9mMba5rYPRQ81oQMrDTvkxUlUQIbPsleJED-4ngAb7oTkmM"
 
 
-def get_storage_unit_contents(storage_unit_id: str, steam_id: str, session_id: str, token: str) -> Dict[str, Any]:
+def get_item_float(inspect_url: str) -> Optional[float]:
     """
-    Obtém os itens dentro de uma Unidade de Armazenamento.
-    Requer que o usuário esteja autenticado com a Steam.
+    Obtém o valor float (desgaste) de um item a partir da URL de inspeção.
+    Tenta usar a API CSGOFloat.
     
     Args:
-        storage_unit_id: ID da Unidade de Armazenamento
-        steam_id: SteamID do usuário
-        session_id: ID da sessão Steam
-        token: Token de autenticação Steam
+        inspect_url: URL de inspeção do item
         
     Returns:
-        Dicionário com itens dentro da Unidade de Armazenamento
+        Valor float do item ou None se não for possível obter
     """
-    url = "https://steamcommunity.com/inventory/ajaxviewstorageunit/"
-    
-    cookies = {
-        'sessionid': session_id,
-        'steamLoginSecure': token
-    }
-    
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Referer': f'https://steamcommunity.com/profiles/{steam_id}/inventory/',
-        'X-Requested-With': 'XMLHttpRequest'
-    }
-    
-    data = {
-        'casket_item_id': storage_unit_id,
-        'sessionid': session_id
-    }
-    
+    if not inspect_url:
+        return None
+        
     try:
-        response = requests.post(url, cookies=cookies, headers=headers, data=data)
+        # Adicionar delay para evitar bloqueios pela API
+        time.sleep(1)
+        
+        # Tentar obter via API CSGOFloat
+        response = requests.get(f"{FLOAT_API_URL}{inspect_url}", timeout=15)
         
         if response.status_code == 200:
-            result = response.json()
-            if result.get('success'):
-                # Processar os itens do resultado
-                items = []
-                for item_id, item_data in result.get('items', {}).items():
-                    # Processar cada item na unidade de armazenamento
-                    market_hash_name = item_data.get('market_hash_name', '')
-                    quantity = item_data.get('amount', 1)
-                    name = item_data.get('name', '')
-                    
-                    # Obter preço do item
-                    price = get_item_price(market_hash_name)
-                    
-                    items.append({
-                        'name': name,
-                        'market_hash_name': market_hash_name,
-                        'quantity': quantity,
-                        'price': price,
-                        'total': price * quantity,
-                        'image': item_data.get('icon_url', ''),
-                        'source': 'storage_unit_content'
-                    })
+            data = response.json()
+            if 'iteminfo' in data and 'floatvalue' in data['iteminfo']:
+                float_value = data['iteminfo']['floatvalue']
+                return float_value
                 
-                return {
-                    'storage_unit_id': storage_unit_id,
-                    'total_items': len(items),
-                    'items': items,
-                    'total_value': sum(item['total'] for item in items)
-                }
-            else:
-                print(f"Erro ao acessar unidade: {result.get('error', 'Desconhecido')}")
-        else:
-            print(f"Erro HTTP ao acessar unidade: {response.status_code}")
-    
+        print(f"Falha ao obter float via API: Status {response.status_code}")
     except Exception as e:
-        print(f"Erro ao obter conteúdo da unidade de armazenamento: {e}")
-        import traceback
-        traceback.print_exc()
+        print(f"Erro ao obter valor float: {e}")
+        
+    return None
+
+
+def extract_inspect_url(desc: Dict) -> Optional[str]:
+    """
+    Extrai a URL de inspeção de um item a partir da descrição.
     
-    return {
-        'storage_unit_id': storage_unit_id,
-        'error': 'Não foi possível acessar o conteúdo desta unidade de armazenamento',
-        'items': [],
-        'total_items': 0,
-        'total_value': 0
-    }
+    Args:
+        desc: Descrição do item do inventário
+        
+    Returns:
+        URL de inspeção ou None se não estiver disponível
+    """
+    # Para itens normais, a URL de inspeção está em actions[0].link
+    actions = desc.get('actions', [])
+    if actions and 'link' in actions[0]:
+        link = actions[0]['link']
+        # Substituir o placeholder %owner_steamid% pelo ID do proprietário
+        # Isso não é necessário para a API CSGOFloat
+        return link
+        
+    # Para itens dentro de unidades de armazenamento, a URL pode estar em outro formato
+    # Isso é apenas um stub - a lógica real dependeria da estrutura exata do item
+    
+    return None
+
+
+def categorize_inventory(inventory: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Categoriza os itens do inventário por tipo.
+    
+    Args:
+        inventory: Dados do inventário
+        
+    Returns:
+        Inventário com itens categorizados
+    """
+    items_by_category = {}
+    
+    for item in inventory.get("items", []):
+        category = item.get("category", "Outros")
+        
+        if category not in items_by_category:
+            items_by_category[category] = {
+                "items": [],
+                "count": 0,
+                "value": 0.0
+            }
+            
+        items_by_category[category]["items"].append(item)
+        items_by_category[category]["count"] += item.get("quantity", 1)
+        items_by_category[category]["value"] += item.get("total", 0)
+        
+    # Arredondar valores
+    for category in items_by_category:
+        items_by_category[category]["value"] = round(items_by_category[category]["value"], 2)
+        
+    # Adicionar ao resultado
+    inventory["items_by_category"] = items_by_category
+    
+    return inventory
+
+
+def adjust_price_by_float(base_price: float, float_value: float, market_hash_name: str) -> float:
+    """
+    Ajusta o preço de um item com base no valor float.
+    Itens com float baixo (mais novo) geralmente valem mais.
+    
+    Args:
+        base_price: Preço base do item
+        float_value: Valor float do item (0 a 1)
+        market_hash_name: Nome do item para casos especiais
+        
+    Returns:
+        Preço ajustado
+    """
+    # Ranges de desgaste: https://csgofloat.com/
+    # Factory New: 0.00 - 0.07
+    # Minimal Wear: 0.07 - 0.15
+    # Field-Tested: 0.15 - 0.38
+    # Well-Worn: 0.38 - 0.45
+    # Battle-Scarred: 0.45 - 1.00
+    
+    # Verificar se é um item popular onde o float faz grande diferença
+    high_value_patterns = [
+        "fade", "doppler", "marble fade", "crimson web", "case hardened",
+        "dragon lore", "medusa", "howl", "fire serpent", "asiimov",
+        "tiger tooth", "slaughter", "autotronic", "lore", "gamma doppler",
+        "★", "knife", "gloves"
+    ]
+    
+    # Verificar se é um item de alto valor
+    is_high_value = any(pattern in market_hash_name.lower() for pattern in high_value_patterns)
+    
+    # Ajustes mais intensos para itens de valor alto
+    if is_high_value:
+        # Para Factory New, quanto mais baixo o float, mais valioso
+        if float_value < 0.07:  # Factory New
+            # Escala logarítmica: valores mais baixos têm efeito exponencial
+            # float 0.069 = x1.1, float 0.03 = x1.5, float 0.01 = x2, float 0.001 = x3
+            if float_value < 0.001:  # Ultra raro
+                return base_price * 4.0  # Quadruplicar o valor
+            elif float_value < 0.01:
+                return base_price * (3.0 - float_value * 100)  # Entre x2 e x3
+            elif float_value < 0.03:
+                return base_price * (2.0 - float_value * 33)  # Entre x1.5 e x2
+            else:
+                return base_price * (1.1 + (0.07 - float_value) * 5.7)  # Entre x1.1 e x1.5
+        
+        # Para outros níveis de desgaste, os valores extremos podem ser mais valiosos
+        elif float_value < 0.15:  # Minimal Wear
+            # Float perto de Factory New (< 0.08) é mais valioso
+            return base_price * (1 + max(0, (0.15 - float_value) * 2))
+        elif float_value < 0.38:  # Field-Tested
+            # Field-Tested com float baixo (perto de MW) é mais valioso
+            # Field-Tested com float alto (perto de WW) é menos valioso
+            mid_value = 0.265  # O meio do range FT
+            distance = abs(float_value - mid_value) / (0.38 - 0.15) * 2  # Distância normalizada
+            return base_price * (1 + (0.15 - float_value) * 0.5)  # Mais valor se mais perto de MW
+        elif float_value < 0.45:  # Well-Worn
+            # Geralmente WW tem menos variação de preço
+            return base_price  # Valor padrão
+        else:  # Battle-Scarred
+            # BS com float muito alto (>0.95) pode ser mais valioso
+            if float_value > 0.95:
+                return base_price * (1 + (float_value - 0.95) * 10)  # Até 50% mais
+            return base_price
+    else:
+        # Para itens comuns, o ajuste é mais sutil
+        # Factory New com float baixo (< 0.01) é um pouco mais valioso
+        if float_value < 0.01:
+            return base_price * 1.2  # 20% mais valioso
+        # Factory New com float normal
+        elif float_value < 0.07:
+            return base_price * (1 + (0.07 - float_value) * 1.5)  # Até 10% mais
+        # Para outros, manter o preço base
+        return base_price

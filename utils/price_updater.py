@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import List, Dict
 
 from utils.database import get_outdated_skins, set_metadata, get_metadata, get_stats
-from services.steam_market import get_item_price_via_scraping, process_scraped_price
+from services.steam_market import get_item_price_via_csgostash, process_scraped_price
 from utils.database import save_skin_price
 
 # Configurações
@@ -56,10 +56,10 @@ def update_skin_prices(max_items: int = UPDATE_BATCH_SIZE, days_old: int = 7) ->
             
             print(f"[{i+1}/{total_items}] Atualizando {market_hash_name}...")
             
-            # Obter novo preço via scraping
-            new_price_raw = get_item_price_via_scraping(market_hash_name, app_id, currency)
+            # Obter novo preço via CSGOStash em vez de Steam
+            new_price_raw = get_item_price_via_csgostash(market_hash_name, currency)
             if new_price_raw:
-                new_price = process_scraped_price(market_hash_name, new_price_raw)
+                new_price = process_scraped_price(market_hash_name, new_price_raw.get("price", 0))
                 
                 # Acumular valores para estatísticas
                 stats['total_value_before'] += old_price

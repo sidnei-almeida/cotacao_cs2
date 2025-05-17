@@ -16,7 +16,7 @@ from starlette.status import HTTP_401_UNAUTHORIZED
 # Importando serviços e configurações
 from services.steam_inventory import get_inventory_value, get_storage_unit_contents
 from services.case_evaluator import get_case_details, list_cases
-from services.steam_market import get_item_price, get_api_status
+from services.steam_market import get_item_price, get_api_status, get_item_price_via_csgostash
 from utils.config import get_api_config
 from utils.database import init_db, get_stats, get_db_connection
 from utils.price_updater import run_scheduler, force_update_now, get_scheduler_status, schedule_weekly_update
@@ -1004,6 +1004,26 @@ async def healthcheck(response: Response, request: Request = None):
         "environment": os.environ.get("RAILWAY_ENVIRONMENT_NAME", "development"),
         "allowed_origins": ALLOWED_ORIGINS
     }
+
+
+@app.get("/test-csgostash/{market_hash_name}")
+async def test_csgostash(market_hash_name: str):
+    """
+    Endpoint para testar a função de obtenção de preços via CSGOStash.
+    Apenas para desenvolvimento/teste.
+    """
+    try:
+        result = get_item_price_via_csgostash(market_hash_name)
+        return {
+            "market_hash_name": market_hash_name,
+            "result": result
+        }
+    except Exception as e:
+        import traceback
+        return {
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }
 
 
 if __name__ == "__main__":
