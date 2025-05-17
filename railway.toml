@@ -3,9 +3,10 @@ builder = "NIXPACKS"
 buildCommand = "pip install -r requirements.txt"
 
 [deploy]
-startCommand = "gunicorn -k uvicorn.workers.UvicornWorker -w 4 --timeout 120 --keep-alive 120 main:app -b 0.0.0.0:$PORT"
+startCommand = "gunicorn -k uvicorn.workers.UvicornWorker -w 1 --timeout 300 --keep-alive 120 --preload main:app -b 0.0.0.0:$PORT"
 healthcheckPath = "/healthcheck"
 healthcheckTimeout = 300
+healthcheckStartPeriod = 60
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 5
 

@@ -996,8 +996,8 @@ async def startup_event():
 
 @app.get("/healthcheck")
 async def healthcheck():
-    """Endpoint simples para verificar se a API está respondendo"""
-    return {"status": "ok", "timestamp": datetime.datetime.now().isoformat()}
+    """Endpoint minimalista para verificar se a API está respondendo"""
+    return Response(content="ok", media_type="text/plain")
 
 
 @app.get("/test-csgostash/{market_hash_name}")
