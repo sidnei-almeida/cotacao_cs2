@@ -1,10 +1,10 @@
-from fastapi import FastAPI, HTTPException, Query, Request, Depends, Response, Form, Cookie
+from fastapi import FastAPI, HTTPException, Query, Request, Depends, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse, JSONResponse
+from fastapi.responses import RedirectResponse
 from fastapi.security import OAuth2PasswordBearer, OAuth2
 from fastapi.openapi.models import OAuthFlows as OAuthFlowsModel
 from starlette.middleware.base import BaseHTTPMiddleware
-from typing import List, Dict, Any, Optional, Literal
+from typing import List, Dict, Any, Optional
 import uvicorn
 import jwt
 from jwt.exceptions import PyJWTError
@@ -13,20 +13,14 @@ import datetime
 from urllib.parse import urlencode
 from starlette.status import HTTP_401_UNAUTHORIZED
 import asyncio
-import logging
-import traceback
-import json
-import re
-import requests
-from functools import lru_cache
 
 # Importando serviços e configurações
 from services.steam_inventory import get_inventory_value, get_storage_unit_contents
 from services.case_evaluator import get_case_details, list_cases
 from services.steam_market import get_item_price, get_api_status, get_item_price_via_csgostash
 from utils.config import get_api_config
-from utils.database import init_db, get_stats, get_db_connection, get_skin_price, save_skin_price, set_metadata, get_metadata
-from utils.price_updater import run_scheduler, force_update_now, get_scheduler_status, schedule_weekly_update, force_update_cases_now
+from utils.database import init_db, get_stats, get_db_connection
+from utils.price_updater import run_scheduler, force_update_now, get_scheduler_status, schedule_weekly_update
 from auth.steam_auth import steam_login_url, validate_steam_login, create_jwt_token, verify_jwt_token, SECRET_KEY, ALGORITHM
 
 # Importe para o inicializador de banco de dados
@@ -916,24 +910,6 @@ async def force_db_update(current_user: dict = Depends(get_current_user), max_it
         "stats": stats
     }
 
-@app.post("/db/update-cases")
-async def force_cases_update(current_user: dict = Depends(get_current_user)):
-    """
-    Força uma atualização imediata dos preços e conteúdos das caixas.
-    Requer autenticação.
-    """
-    # Verificar se o usuário está autenticado
-    if not current_user:
-        raise HTTPException(status_code=401, detail="Autenticação necessária")
-    
-    # Forçar atualização
-    stats = force_update_cases_now()
-    
-    return {
-        "message": f"Atualização de caixas concluída. {stats.get('updated_cases', 0)} caixas atualizadas.",
-        "stats": stats
-    }
-
 # Rota para inicializar o banco de dados (protegida por chave de admin)
 @app.get("/api/db/init")
 async def initialize_database(admin_key: str = Query(None), response: Response = None):
@@ -970,18 +946,18 @@ async def startup_event():
     """
     Inicializa recursos na inicialização da aplicação.
     """
-    logging.info("=== INICIANDO API ELITE SKINS CS2 ===")
-    logging.info(f"Ambiente: {os.environ.get('RAILWAY_ENVIRONMENT_NAME', 'desenvolvimento')}")
+    print("=== INICIANDO API ELITE SKINS CS2 ===")
+    print(f"Ambiente: {os.environ.get('RAILWAY_ENVIRONMENT_NAME', 'desenvolvimento')}")
     
     # Inicializar recursos críticos - banco de dados com tratamento de erro para não bloquear a inicialização
     try:
         # Inicialização básica do banco para que a API possa responder
-        logging.info("Inicializando banco de dados (modo rápido)...")
+        print("Inicializando banco de dados (modo rápido)...")
         init_db()
-        logging.info("Banco de dados inicializado com sucesso para operação básica!")
+        print("Banco de dados inicializado com sucesso para operação básica!")
     except Exception as e:
-        logging.error(f"AVISO: Erro na inicialização básica do banco de dados: {e}")
-        logging.info("A API continuará iniciando, mas algumas funcionalidades podem estar limitadas")
+        print(f"AVISO: Erro na inicialização básica do banco de dados: {e}")
+        print("A API continuará iniciando, mas algumas funcionalidades podem estar limitadas")
     
     # Inicializar recursos não críticos de forma assíncrona
     @app.on_event("startup")
@@ -989,38 +965,19 @@ async def startup_event():
         # Atrasar inicialização para garantir que o server já está respondendo
         await asyncio.sleep(10)  # Esperar 10 segundos
         try:
-            # Configurar as atualizações programadas
-            logging.info("Configurando atualizações programadas...")
-            
             # Configurar a atualização semanal dos preços (Segunda-feira às 3:00)
+            print("Configurando atualizações programadas...")
             schedule_weekly_update(day_of_week=0, hour=3, minute=0)
             
             # Iniciar o agendador em uma thread separada
             run_scheduler()
-            logging.info("Agendador de atualizações iniciado!")
+            print("Agendador de atualização de preços iniciado!")
             
-            # Verificar se precisamos atualizar caixas
-            last_cases_update = get_metadata('last_cases_update')
-            if not last_cases_update:
-                logging.info("Nenhuma atualização de caixas encontrada, agendando atualização inicial...")
-                # Agendar para executar em 5 minutos para dar tempo do sistema inicializar completamente
-                asyncio.create_task(_schedule_initial_cases_update())
-            
-            logging.info("=== INICIALIZAÇÃO COMPLETA DOS RECURSOS ADICIONAIS ===")
+            print("=== INICIALIZAÇÃO COMPLETA DOS RECURSOS ADICIONAIS ===")
         except Exception as e:
-            logging.error(f"AVISO: Erro na inicialização de recursos não críticos: {e}")
+            print(f"AVISO: Erro na inicialização de recursos não críticos: {e}")
+            import traceback
             traceback.print_exc()
-
-
-async def _schedule_initial_cases_update():
-    """Agenda a atualização inicial de caixas após 5 minutos da inicialização"""
-    try:
-        await asyncio.sleep(300)  # Esperar 5 minutos
-        logging.info("Executando primeira atualização de caixas...")
-        stats = force_update_cases_now()
-        logging.info(f"Atualização inicial de caixas concluída: {stats.get('updated_cases', 0)} caixas atualizadas")
-    except Exception as e:
-        logging.error(f"Erro na atualização inicial de caixas: {e}")
 
 
 @app.get("/healthcheck")
@@ -1032,7 +989,7 @@ async def healthcheck():
         init_db()
         return Response(content="OK", media_type="text/plain", status_code=200)
     except Exception as e:
-        logging.error(f"Erro no healthcheck: {str(e)}")
+        print(f"Erro no healthcheck: {str(e)}")
         # Ainda retorna 200 para o Railway não matar o serviço durante inicialização
         return Response(content="Service warming up", media_type="text/plain", status_code=200)
 
