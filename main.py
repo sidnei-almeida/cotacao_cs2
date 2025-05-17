@@ -12,6 +12,7 @@ import os
 import datetime
 from urllib.parse import urlencode
 from starlette.status import HTTP_401_UNAUTHORIZED
+import asyncio
 
 # Importando serviços e configurações
 from services.steam_inventory import get_inventory_value, get_storage_unit_contents
@@ -962,48 +963,41 @@ async def startup_event():
     print("=== INICIANDO API ELITE SKINS CS2 ===")
     print(f"Ambiente: {os.environ.get('RAILWAY_ENVIRONMENT_NAME', 'desenvolvimento')}")
     
+    # Inicializar recursos críticos - banco de dados com tratamento de erro para não bloquear a inicialização
     try:
-        # Inicializar o banco de dados
-        print("Inicializando banco de dados...")
+        # Inicialização básica do banco para que a API possa responder
+        print("Inicializando banco de dados (modo rápido)...")
         init_db()
-        print("Banco de dados inicializado com sucesso!")
-        
-        # Configurar a atualização semanal dos preços (Segunda-feira às 3:00)
-        print("Configurando atualizações programadas...")
-        schedule_weekly_update(day_of_week=0, hour=3, minute=0)
-        
-        # Iniciar o agendador em uma thread separada
-        run_scheduler()
-        print("Agendador de atualização de preços iniciado!")
-        
-        print("=== INICIALIZAÇÃO CONCLUÍDA COM SUCESSO ===")
+        print("Banco de dados inicializado com sucesso para operação básica!")
     except Exception as e:
-        print(f"ERRO NA INICIALIZAÇÃO: {e}")
-        import traceback
-        traceback.print_exc()
-        print("=== ATENÇÃO: API INICIADA COM ERROS ===")
+        print(f"AVISO: Erro na inicialização básica do banco de dados: {e}")
+        print("A API continuará iniciando, mas algumas funcionalidades podem estar limitadas")
+    
+    # Inicializar recursos não críticos de forma assíncrona
+    @app.on_event("startup")
+    async def delayed_startup():
+        # Atrasar inicialização para garantir que o server já está respondendo
+        await asyncio.sleep(10)  # Esperar 10 segundos
+        try:
+            # Configurar a atualização semanal dos preços (Segunda-feira às 3:00)
+            print("Configurando atualizações programadas...")
+            schedule_weekly_update(day_of_week=0, hour=3, minute=0)
+            
+            # Iniciar o agendador em uma thread separada
+            run_scheduler()
+            print("Agendador de atualização de preços iniciado!")
+            
+            print("=== INICIALIZAÇÃO COMPLETA DOS RECURSOS ADICIONAIS ===")
+        except Exception as e:
+            print(f"AVISO: Erro na inicialização de recursos não críticos: {e}")
+            import traceback
+            traceback.print_exc()
 
 
 @app.get("/healthcheck")
-async def healthcheck(response: Response, request: Request = None):
+async def healthcheck():
     """Endpoint simples para verificar se a API está respondendo"""
-    # Adicionar headers CORS manualmente para garantir que eles estejam presentes
-    origin = request.headers.get("origin", "*")
-    if origin in ALLOWED_ORIGINS or "*" in ALLOWED_ORIGINS:
-        response.headers["Access-Control-Allow-Origin"] = origin
-    else:
-        response.headers["Access-Control-Allow-Origin"] = "*"
-    
-    response.headers["Access-Control-Allow-Credentials"] = "true"
-    response.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
-    response.headers["Access-Control-Allow-Headers"] = "*"
-    
-    return {
-        "status": "ok",
-        "timestamp": datetime.datetime.now().isoformat(),
-        "environment": os.environ.get("RAILWAY_ENVIRONMENT_NAME", "development"),
-        "allowed_origins": ALLOWED_ORIGINS
-    }
+    return {"status": "ok", "timestamp": datetime.datetime.now().isoformat()}
 
 
 @app.get("/test-csgostash/{market_hash_name}")
