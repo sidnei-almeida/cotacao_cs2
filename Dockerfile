@@ -19,7 +19,8 @@ RUN pip install --no-cache-dir --upgrade pip && \
 COPY . .
 
 # Expose the port
-EXPOSE $PORT
+EXPOSE 8080
+ENV PORT=8080
 
 # Command to run the application with 4 workers como na versão funcionando
-CMD gunicorn -k uvicorn.workers.UvicornWorker -w 4 --timeout 120 --keep-alive 120 --preload main:app -b 0.0.0.0:$PORT 
+CMD gunicorn -k uvicorn.workers.UvicornWorker -w 4 --timeout 120 --keep-alive 120 --preload main:app -b 0.0.0.0:8080 

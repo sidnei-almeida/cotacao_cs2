@@ -817,3 +817,225 @@ def adjust_price_by_float(base_price: float, float_value: float, market_hash_nam
             return base_price * (1 + (0.07 - float_value) * 1.5)  # Até 10% mais
         # Para outros, manter o preço base
         return base_price
+
+
+def get_storage_unit_contents(unit_id: str, steamid: str, session_id: str, steam_token: str) -> Dict[str, Any]:
+    """
+    Obtém o conteúdo de uma unidade de armazenamento.
+    Requer autenticação do usuário (session_id e steam_token).
+    
+    Args:
+        unit_id: ID do asset da unidade de armazenamento
+        steamid: ID da Steam do dono da unidade
+        session_id: ID da sessão Steam do usuário autenticado
+        steam_token: Token de autenticação Steam do usuário
+        
+    Returns:
+        Dicionário com informações sobre o conteúdo da unidade
+    """
+    try:
+        print(f"Obtendo conteúdo da unidade {unit_id} para o usuário {steamid}")
+        
+        # URL para a API de Storage Units da Steam
+        storage_url = f"https://steamcommunity.com/inventory/{steamid}/730/2/storage/{unit_id}"
+        
+        # Cabeçalhos necessários para autenticação
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'Accept': 'application/json',
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Cookie': f'sessionid={session_id}; steamLoginSecure={steam_token}'
+        }
+        
+        # Fazer requisição para obter o conteúdo
+        print(f"Fazendo requisição para {storage_url}")
+        response = requests.get(
+            storage_url,
+            headers=headers,
+            timeout=30  # Timeout aumentado para dar tempo suficiente
+        )
+        
+        # Verificar se a requisição foi bem-sucedida
+        if response.status_code == 200:
+            unit_data = response.json()
+            print(f"Conteúdo obtido com sucesso: {len(unit_data.get('assets', []))} itens encontrados")
+            
+            # Estrutura similar ao inventário normal
+            result = {
+                "unit_id": unit_id,
+                "steamid": steamid,
+                "total_items": 0,
+                "total_value": 0.0,
+                "items": []
+            }
+            
+            # Processar os itens dentro da unidade
+            if "assets" in unit_data and "descriptions" in unit_data:
+                # Mapear descriptions para acesso rápido
+                descriptions = {}
+                for desc in unit_data["descriptions"]:
+                    key = f"{desc.get('classid')}_{desc.get('instanceid')}"
+                    descriptions[key] = desc
+                
+                # Processar cada item
+                processed_items = []
+                total_value = 0.0
+                most_valuable_item = None
+                highest_value = 0.0
+                
+                for asset in unit_data["assets"]:
+                    asset_id = asset.get("assetid")
+                    classid = asset.get("classid")
+                    instanceid = asset.get("instanceid")
+                    amount = int(asset.get("amount", 1))
+                    
+                    # Encontrar a descrição do item
+                    desc_key = f"{classid}_{instanceid}"
+                    if desc_key in descriptions:
+                        desc = descriptions[desc_key]
+                        
+                        # Extrair informações relevantes
+                        market_hash_name = desc.get("market_hash_name", "")
+                        name = desc.get("name", "")
+                        type_info = desc.get("type", "")
+                        tradable = desc.get("tradable", 0) == 1
+                        
+                        # Verificar se é um adesivo
+                        is_sticker = "Sticker" in name or "Adesivo" in name
+                        
+                        # Item especial (StatTrak, Souvenir)
+                        is_special = "StatTrak™" in name or "Souvenir" in name
+                        
+                        # Extrair URL de inspeção e obter valor float
+                        inspect_url = extract_inspect_url(desc)
+                        float_value = None
+                        
+                        # Só obter float para armas e facas
+                        if inspect_url and not is_sticker:
+                            # Verificar se é uma arma ou faca
+                            has_float = any(cat in type_info.lower() for cat in [
+                                "pistol", "rifle", "smg", "shotgun", "machinegun", 
+                                "sniper rifle", "knife", "★"
+                            ])
+                            
+                            if has_float:
+                                float_value = get_item_float(inspect_url)
+                                if float_value is not None:
+                                    print(f"Float obtido para {market_hash_name}: {float_value:.10f}")
+                        
+                        # Obter preço do item
+                        price = 0.0
+                        if tradable:
+                            try:
+                                price_data = get_item_price(market_hash_name)
+                                if isinstance(price_data, dict):
+                                    price = price_data.get("price", 0.0)
+                                else:
+                                    price = float(price_data) if price_data else 0.0
+                                    
+                                # Ajustar preço com base no float (para itens que têm)
+                                if float_value is not None:
+                                    price = adjust_price_by_float(price, float_value, market_hash_name)
+                            except Exception as e:
+                                print(f"Erro ao obter preço para {market_hash_name}: {e}")
+                        
+                        item_total = price * amount
+                        
+                        # Extrair categoria e tipo
+                        category, item_type = parse_item_type(type_info, desc)
+                        
+                        # Verificar se o item tem tags que indicam qualidade/raridade 
+                        tags = desc.get("tags", [])
+                        rarity = next((tag.get("name", "") for tag in tags if tag.get("category") == "Rarity"), "Normal")
+                        exterior = next((tag.get("name", "") for tag in tags if tag.get("category") == "Exterior"), "Not Painted")
+                        
+                        # Criar objeto item
+                        item = {
+                            "assetid": asset_id,
+                            "name": name,
+                            "market_hash_name": market_hash_name,
+                            "quantity": amount,
+                            "price": price,
+                            "total": item_total,
+                            "tradable": tradable,
+                            "category": category,
+                            "type": item_type,
+                            "rarity": rarity,
+                            "exterior": exterior,
+                            "stattrak": "StatTrak™" in name,
+                            "souvenir": "Souvenir" in name,
+                            "is_sticker": is_sticker,
+                            "image": get_item_image(desc),
+                            "source": "storage_unit_content",  # Indicar que vem de dentro de uma unidade
+                            "inspect_url": inspect_url,
+                            "float_value": float_value
+                        }
+                        
+                        # Adicionar à lista de itens
+                        processed_items.append(item)
+                        
+                        # Atualizar item mais valioso
+                        if price > highest_value:
+                            highest_value = price
+                            most_valuable_item = {
+                                "name": name,
+                                "market_hash_name": market_hash_name,
+                                "price": price,
+                                "rarity": rarity,
+                                "category": category,
+                                "float_value": float_value
+                            }
+                            print(f"Novo item mais valioso na unidade: {name} - R$ {price:.2f}" + 
+                                  (f" (Float: {float_value:.10f})" if float_value is not None else ""))
+                        
+                        # Atualizar valor total
+                        total_value += item_total
+                
+                # Atualizar resultados
+                result["items"] = processed_items
+                result["total_items"] = sum(item.get("quantity", 1) for item in processed_items)
+                result["total_value"] = total_value
+                result["most_valuable_item"] = most_valuable_item
+                result["status"] = "success"
+                
+                print(f"Processados {len(processed_items)} itens da unidade {unit_id}, valor total: R$ {total_value:.2f}")
+                
+                return result
+            else:
+                print(f"Dados da unidade de armazenamento incompletos: assets={unit_data.get('assets') is not None}, descriptions={unit_data.get('descriptions') is not None}")
+                return {
+                    "unit_id": unit_id,
+                    "steamid": steamid,
+                    "total_items": 0,
+                    "total_value": 0.0,
+                    "items": [],
+                    "status": "no_data",
+                    "error": "Dados incompletos retornados pela API"
+                }
+        else:
+            print(f"Erro ao acessar unidade de armazenamento: código {response.status_code}")
+            print(f"Resposta: {response.text[:200]}...")
+            return {
+                "unit_id": unit_id,
+                "steamid": steamid,
+                "total_items": 0,
+                "total_value": 0.0,
+                "items": [],
+                "status": "error",
+                "error": f"Erro ao acessar unidade: código {response.status_code}"
+            }
+            
+    except Exception as e:
+        print(f"Erro ao obter conteúdo da unidade {unit_id}: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        
+        return {
+            "unit_id": unit_id,
+            "steamid": steamid,
+            "error": str(e),
+            "status": "exception",
+            "total_items": 0,
+            "total_value": 0.0,
+            "items": []
+        }
