@@ -1,9 +1,8 @@
 [build]
-builder = "NIXPACKS"
-buildCommand = "pip install -r requirements.txt"
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
 
 [deploy]
-startCommand = "gunicorn -k uvicorn.workers.UvicornWorker -w 1 --timeout 300 --keep-alive 120 --preload main:app -b 0.0.0.0:$PORT"
 healthcheckPath = "/healthcheck"
 healthcheckTimeout = 300
 healthcheckStartPeriod = 60
