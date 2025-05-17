@@ -21,5 +21,5 @@ COPY . .
 # Expose the port
 EXPOSE $PORT
 
-# Command to run the application
-CMD gunicorn -k uvicorn.workers.UvicornWorker -w 1 --timeout 300 --keep-alive 120 --preload main:app -b 0.0.0.0:$PORT 
+# Command to run the application with 4 workers como na versão funcionando
+CMD gunicorn -k uvicorn.workers.UvicornWorker -w 4 --timeout 120 --keep-alive 120 --preload main:app -b 0.0.0.0:$PORT 
